@@ -20,3 +20,7 @@
 	branch = master
 [submodule "accumulator"]
 	branch = development
+[submodule "generators/accumulator"]
+	path = generators/accumulator
+	url = https://github.com/milovanovic/accumulator.git
+	branch = development

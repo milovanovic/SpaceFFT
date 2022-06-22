@@ -18,3 +18,7 @@
 	path = generators/logMagMux
 	url = https://github.com/milovanovic/logMagMux.git
 	branch = master
+[submodule "generators/dsp-utils"]
+	path = generators/dsp-utils
+	url = https://github.com/milovanovic/dsp-utils.git
+	branch = master

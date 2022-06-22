@@ -1,0 +1,20 @@
+[submodule "generators/cfar"]
+	path = generators/cfar
+	url = https://github.com/milovanovic/cfar.git
+	branch = master
+[submodule "generators/windowing"]
+	path = generators/windowing
+	url = https://github.com/milovanovic/windowing.git
+	branch = master
+[submodule "generators/sdf-fft"]
+	path = generators/sdf-fft
+	url = https://github.com/milovanovic/sdf-fft.git
+	branch = master
+[submodule "generators/accumulator"]
+	path = generators/accumulator
+	url = https://github.com/milovanovic/accumulator.git
+	branch = master
+[submodule "generators/logMagMux"]
+	path = generators/logMagMux
+	url = https://github.com/milovanovic/logMagMux.git
+	branch = master

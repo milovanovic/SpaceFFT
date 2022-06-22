@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package spacefft
+package spacefft.splitter
 
 import chisel3._
 import dsptools._

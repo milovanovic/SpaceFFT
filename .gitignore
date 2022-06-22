@@ -1,0 +1,12 @@
+test_run_dir/
+*.fir
+*.v
+*.conf
+*.json
+
+verilog/
+
+target/
+project/target
+project/project
+project/build.properties

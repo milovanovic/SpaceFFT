@@ -17,8 +17,8 @@ import freechips.rocketchip.diplomacy._
 
 import spacefft.ddrwrapper._
 import spacefft.splitter._
+import spacefft.queue._
 
-import dsputils._
 import fft._
 import windowing._
 import magnitude._
@@ -102,13 +102,13 @@ abstract class SpaceFFT [T <: Data : Real: BinaryRepresentation, D, U, E, O, B <
   val fft_2D : Option[Block] = if (params.fft2DParams != None) Some(LazyModule(new AXI4FFTBlock(address = params.fft2DParams.get.fftAddress, params = params.fft2DParams.get.fftParams, _beatBytes = beatBytes, configInterface = false))) else None
   val mag_2D : Option[Block] = if (params.mag2DParams != None && params.fft2DParams != None) Some(LazyModule(new AXI4LogMagMuxBlock(params.mag2DParams.get.magParams, params.mag2DParams.get.magAddress, _beatBytes = beatBytes))) else None
   
-  val split : Option[Block] = if (params.fft2DParams != None) Some(LazyModule(new AXI4Splitter(address = params.splitParams.get.splitAddress, beatBytes){
+  val split = if (params.fft2DParams != None) Some(LazyModule(new AXI4Splitter(address = params.splitParams.get.splitAddress, beatBytes){
     val ioOutNode = BundleBridgeSink[AXI4StreamBundle]()
     ioOutNode := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := streamNode
     val out = InModuleBody { ioOutNode.makeIO() }
   })) else None
   
-  val queue : Option[Block] = if (params.fft2DParams  != None) Some(LazyModule(new AXI4DspQueueWithSyncReadMem(params.queueParams.get.queueParams, params.queueParams.get.queueAddress, _beatBytes = beatBytes){
+  val queue = if (params.fft2DParams  != None) Some(LazyModule(new AXI4DspQueueWithSyncReadMem(params.queueParams.get.queueParams, params.queueParams.get.queueAddress, _beatBytes = beatBytes){
     // streamNode
     val ioInNode = BundleBridgeSource(() => new AXI4StreamBundle(AXI4StreamBundleParameters(n = beatBytes)))
     streamNode := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = beatBytes)) := ioInNode
@@ -117,7 +117,7 @@ abstract class SpaceFFT [T <: Data : Real: BinaryRepresentation, D, U, E, O, B <
 
   /* Blocks */
   val blocks_1D: Seq[Block] = Seq(win_1D, fft_1D, split, mag_1D, acc_1D, cfar_1D).flatten
-  val blocks_2D: Seq[Block] = Seq(queue, fft_2D, mag_1D).flatten
+  val blocks_2D: Seq[Block] = Seq(queue, fft_2D, mag_2D).flatten
   val blocks   : Seq[Block] = blocks_1D ++ blocks_2D
   require(blocks_1D.length >= 1, "At least one block should exist")
   
@@ -139,10 +139,10 @@ abstract class SpaceFFT [T <: Data : Real: BinaryRepresentation, D, U, E, O, B <
 
     /////////////// RANGE ///////////////////////
 
-    ddr4CtrlrWrapper.io.s_axis_tdata_r_0  := split.module.out.bits.data
-    ddr4CtrlrWrapper.io.s_axis_tvalid_r_0 := split.module.out.valid
-    ddr4CtrlrWrapper.io.s_axis_tlast_r_0  := split.module.out.bits.last
-    split.module.out.ready := true.B
+    ddr4CtrlrWrapper.io.s_axis_tdata_r_0  := split.get.out.bits.data
+    ddr4CtrlrWrapper.io.s_axis_tvalid_r_0 := split.get.out.valid
+    ddr4CtrlrWrapper.io.s_axis_tlast_r_0  := split.get.out.bits.last
+    split.get.out.ready := true.B
 
     ddr4CtrlrWrapper.io.s_axis_tdata_r_1  := 0.U
     ddr4CtrlrWrapper.io.s_axis_tvalid_r_1 := false.B
@@ -276,10 +276,10 @@ abstract class SpaceFFT [T <: Data : Real: BinaryRepresentation, D, U, E, O, B <
     ////////////////////// Doppler OUT /////////////////////////////////////////////
     // drive receiver one to doppler fft!
 
-    queue.module.in.bits.data  := ddr4CtrlrWrapper.io.m_axis_tdata_d_0
-    queue.module.in.valid := ddr4CtrlrWrapper.io.m_axis_tvalid_d_0
-    queue.module.in.bits.last  := ddr4CtrlrWrapper.io.m_axis_tlast_d_0
-    ddr4CtrlrWrapper.io.m_axis_tready_d_0 := queue.module.in.ready
+    queue.get.in.bits.data  := ddr4CtrlrWrapper.io.m_axis_tdata_d_0
+    queue.get.in.valid := ddr4CtrlrWrapper.io.m_axis_tvalid_d_0
+    queue.get.in.bits.last  := ddr4CtrlrWrapper.io.m_axis_tlast_d_0
+    ddr4CtrlrWrapper.io.m_axis_tready_d_0 := queue.get.in.ready
 
     val mem_reset = IO(Input(Bool()))
     val reset_n = IO(Input(Bool()))
@@ -348,13 +348,16 @@ trait AXI4SpaceFFTPins extends AXI4SpaceFFT[FixedPoint] {
   }}
 
   // streamNode
-  val ioInNode = BundleBridgeSource(() => new AXI4StreamBundle(AXI4StreamBundleParameters(n = beatBytes)))
-  val ioOutNode = BundleBridgeSink[AXI4StreamBundle]()
+  val ioInNode_1D  = BundleBridgeSource(() => new AXI4StreamBundle(AXI4StreamBundleParameters(n = beatBytes)))
+  val ioOutNode_1D = BundleBridgeSink[AXI4StreamBundle]()
+  val ioOutNode_2D = BundleBridgeSink[AXI4StreamBundle]()
 
-  ioOutNode := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := streamNode := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = beatBytes)) := ioInNode
+  ioOutNode_1D := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := streamNode := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = beatBytes)) := ioInNode_1D
+  ioOutNode_2D := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := blocks_2D.last.streamNode
 
-  val in = InModuleBody { ioInNode.makeIO() }
-  val out = InModuleBody { ioOutNode.makeIO() }
+  val in_1D = InModuleBody { ioInNode_1D.makeIO() }
+  val out_1D = InModuleBody { ioOutNode_1D.makeIO() }
+  val out_2D = InModuleBody { ioOutNode_2D.makeIO() }
 }
 
 
@@ -433,7 +436,7 @@ class SpaceFFTParams(rangeFFTSize: Int = 512, dopplerFFTSize: Int = 256) {
     )),
     // Doppler parameters
     queueParams = Some(QueueParamsAndAddresses(
-      dspQueueParams = DspQueueCustomParams(
+      queueParams = DspQueueCustomParams(
         queueDepth = dopplerFFTSize, // should be the same as max dopplerFFTSize
         progFull = false,
         addEnProgFullOut = false,
@@ -462,6 +465,19 @@ class SpaceFFTParams(rangeFFTSize: Int = 512, dopplerFFTSize: Int = 256) {
         binPoint = 10
       ),
       fftAddress = AddressSet(0x60001600, 0xFF)
+    )),
+    mag2DParams = Some(MagParamsAndAddresses(
+      magParams = MAGParams(
+        protoIn  = FixedPoint(16.W, 10.BP),
+        protoOut = FixedPoint(16.W, 10.BP),
+        protoLog = Some(FixedPoint(16.W, 10.BP)),
+        magType  = MagJPLandSqrMag,
+        log2LookUpWidth = 10,
+        useLast = true,
+        numAddPipes = 1,
+        numMulPipes = 1
+      ),
+      magAddress = AddressSet(0x60001700, 0xFF),
     )),
   )
 }

@@ -59,11 +59,11 @@ lazy val accumulator = (project in file("generators/accumulator"))
 lazy val cfar = (project in file("generators/cfar"))
   .settings(commonSettings: _*)
 
-lazy val `dsp-utils` = (project in file("generators/dsp-utils"))
-  .settings(commonSettings: _*)
+// lazy val `dsp-utils` = (project in file("generators/dsp-utils"))
+//   .settings(commonSettings: _*)
 
 lazy val spaceFFT = (project in file("."))
-  .dependsOn(windowing, fft, logMagMux, accumulator, cfar, `dsp-utils`)
+  .dependsOn(windowing, fft, logMagMux, accumulator, cfar)
   .settings(commonSettings: _*)
   .settings( // Settings for scalafix
     semanticdbEnabled := true,

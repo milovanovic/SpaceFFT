@@ -13,7 +13,7 @@
 [submodule "generators/accumulator"]
 	path = generators/accumulator
 	url = https://github.com/milovanovic/accumulator.git
-	branch = master
+	branch = development
 [submodule "generators/logMagMux"]
 	path = generators/logMagMux
 	url = https://github.com/milovanovic/logMagMux.git
@@ -22,3 +22,5 @@
 	path = generators/dsp-utils
 	url = https://github.com/milovanovic/dsp-utils.git
 	branch = master
+[submodule "accumulator"]
+	branch = development

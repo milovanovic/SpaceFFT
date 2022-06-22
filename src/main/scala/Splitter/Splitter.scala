@@ -3,8 +3,6 @@
 package spacefft.splitter
 
 import chisel3._
-import dsptools._
-import dsptools.numbers._
 import dspblocks._
 import freechips.rocketchip.amba.axi4._
 import freechips.rocketchip.amba.axi4stream._
@@ -14,7 +12,6 @@ import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.amba.axi4._
 import freechips.rocketchip.amba.axi4stream._
 import freechips.rocketchip.diplomacy._
-import freechips.rocketchip.tilelink._
 
 abstract class Splitter[D, U, E, O, B <: Data](beatBytes: Int) extends LazyModule()(Parameters.empty) with DspBlock[D, U, E, O, B] with HasCSR {
 

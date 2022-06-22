@@ -10,10 +10,6 @@
 	path = generators/sdf-fft
 	url = https://github.com/milovanovic/sdf-fft.git
 	branch = master
-[submodule "generators/accumulator"]
-	path = generators/accumulator
-	url = https://github.com/milovanovic/accumulator.git
-	branch = development
 [submodule "generators/logMagMux"]
 	path = generators/logMagMux
 	url = https://github.com/milovanovic/logMagMux.git

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package spacefft.rspchain
+package spacefft
 
 import chisel3._
 import chisel3.stage.{ChiselGeneratorAnnotation, ChiselStage}
@@ -21,13 +21,17 @@ import magnitude._
 import accumulator._
 import cfar._
 
-/* RSPChain parameters */
-case class RSPChainParameters[T <: Data: Real: BinaryRepresentation] (
+/* SpaceFFT parameters */
+case class SpaceFFTParameters[T <: Data: Real: BinaryRepresentation] (
+  // Range parameters
   win1DParams  : Option[WinParamsAndAddresses[T]],
   fft1DParams  : Option[FFTParamsAndAddresses[T]],
   mag1DParams  : Option[MagParamsAndAddresses[T]],
   acc1DParams  : Option[AccParamsAndAddresses[T]],
-  cfar1DParams : Option[CFARParamsAndAddresses[T]]
+  cfar1DParams : Option[CFARParamsAndAddresses[T]],
+  // Doppler parameters
+  splitParams  : Option[SplitParamsAndAddresses],
+  fft2DParams  : Option[FFTParamsAndAddresses[T]],
 )
 
 /* Windows parameters and addresses */
@@ -57,8 +61,12 @@ case class CFARParamsAndAddresses[T <: Data: Real: BinaryRepresentation] (
   cfarParams  : CFARParams[T],
   cfarAddress : AddressSet
 )
+/* Splitter parameters and addresses */
+case class SplitParamsAndAddresses (
+  splitAddress : AddressSet
+)
 
-class AXI4RSPChain[T <: Data : Real: BinaryRepresentation](params: RSPChainParameters[T], beatBytes: Int)(implicit p: Parameters) extends RSPChain[T, AXI4MasterPortParameters, AXI4SlavePortParameters, AXI4EdgeParameters, AXI4EdgeParameters, AXI4Bundle](params, beatBytes) with AXI4DspBlock {
+class AXI4SpaceFFT[T <: Data : Real: BinaryRepresentation](params: SpaceFFTParameters[T], beatBytes: Int)(implicit p: Parameters) extends SpaceFFT[T, AXI4MasterPortParameters, AXI4SlavePortParameters, AXI4EdgeParameters, AXI4EdgeParameters, AXI4Bundle](params, beatBytes) with AXI4DspBlock {
   /* Optional memory mapped port */
   val bus = if (blocks_1D.isEmpty) None else Some(LazyModule(new AXI4Xbar))
   override val mem = if (blocks_1D.isEmpty) None else Some(bus.get.node)
@@ -67,21 +75,23 @@ class AXI4RSPChain[T <: Data : Real: BinaryRepresentation](params: RSPChainParam
   }
 }
 
-abstract class RSPChain [T <: Data : Real: BinaryRepresentation, D, U, E, O, B <: Data] (params: RSPChainParameters[T], beatBytes: Int) extends LazyModule()(Parameters.empty) with DspBlock[D, U, E, O, B] {
+abstract class SpaceFFT [T <: Data : Real: BinaryRepresentation, D, U, E, O, B <: Data] (params: SpaceFFTParameters[T], beatBytes: Int) extends LazyModule()(Parameters.empty) with DspBlock[D, U, E, O, B] {
 
   /* Type of Blocks */
   type Block = AXI4DspBlock
 
+  /* Range */
   val win_1D  : Option[Block] = if (params.win1DParams  != None) Some(LazyModule(new WindowingBlock(csrAddress = params.win1DParams.get.winCSRAddress, ramAddress = params.win1DParams.get.winRAMAddress, params.win1DParams.get.winParams, beatBytes = beatBytes))) else None
   val fft_1D  : Option[Block] = if (params.fft1DParams  != None) Some(LazyModule(new AXI4FFTBlock(address = params.fft1DParams.get.fftAddress, params = params.fft1DParams.get.fftParams, _beatBytes = beatBytes, configInterface = false))) else None
   val mag_1D  : Option[Block] = if (params.mag1DParams  != None) Some(LazyModule(new AXI4LogMagMuxBlock(params.mag1DParams.get.magParams, params.mag1DParams.get.magAddress, _beatBytes = beatBytes))) else None
   val acc_1D  : Option[Block] = if (params.acc1DParams  != None) Some(LazyModule(new AXI4AccChainBlock(params.acc1DParams.get.accParams, params.acc1DParams.get.accAddress, params.acc1DParams.get.accQueueBase, beatBytes))) else None
   val cfar_1D : Option[Block] = if (params.cfar1DParams != None) Some(LazyModule(new AXI4CFARBlock(params.cfar1DParams.get.cfarParams, params.cfar1DParams.get.cfarAddress, _beatBytes = beatBytes))) else None
-
-  val fft_2D  : Option[Block] = if (params.fft2DParams != None) Some(LazyModule(new AXI4FFTBlock(address = params.fft2DParams.get.fftAddress, params = params.fft2DParams.get.fftParams, _beatBytes = beatBytes, configInterface = false))) else None
+  /* Doppler */
+  val split   : Option[Block] = if (params.fft2DParams  != None) Some(LazyModule(new AXI4Splitter(address = params.splitParams.get.splitAddress, beatBytes))) else None
+  val fft_2D  : Option[Block] = if (params.fft2DParams  != None) Some(LazyModule(new AXI4FFTBlock(address = params.fft2DParams.get.fftAddress, params = params.fft2DParams.get.fftParams, _beatBytes = beatBytes, configInterface = false))) else None
   
   /* Blocks */
-  val blocks_1D: Seq[Block]  = Seq(win_1D, fft_1D, mag_1D, acc_1D, cfar_1D).flatten
+  val blocks_1D: Seq[Block]  = Seq(win_1D, fft_1D, split, mag_1D, acc_1D, cfar_1D).flatten
   require(blocks_1D.length >= 1, "At least one block should exist")
   
   /* Connect nodes */
@@ -96,7 +106,7 @@ abstract class RSPChain [T <: Data : Real: BinaryRepresentation, D, U, E, O, B <
   lazy val module = new LazyModuleImp(this) {}
 }
 
-trait AXI4RSPChainPins extends AXI4RSPChain[FixedPoint] {
+trait AXI4SpaceFFTPins extends AXI4SpaceFFT[FixedPoint] {
   def beatBytes: Int = 4
 
   // Generate AXI4 slave output
@@ -119,11 +129,12 @@ trait AXI4RSPChainPins extends AXI4RSPChain[FixedPoint] {
 }
 
 
-class RSPChainParams(fftSize: Int = 1024) {
-  val params : RSPChainParameters[FixedPoint] = RSPChainParameters (
+class SpaceFFTParams(rangeFFTSize: Int = 512, dopplerFFTSize: Int = 256) {
+  val params : SpaceFFTParameters[FixedPoint] = SpaceFFTParameters (
+    // Range parameters
     win1DParams = Some(WinParamsAndAddresses(
       winParams = WindowingParams.fixed(
-        numPoints = fftSize,
+        numPoints = rangeFFTSize,
         dataWidth = 16,
         binPoint  = 10,
         numMulPipes = 1,
@@ -138,16 +149,16 @@ class RSPChainParams(fftSize: Int = 1024) {
       fftParams = FFTParams.fixed(
         dataWidth = 16,
         twiddleWidth = 16,
-        numPoints = fftSize,
+        numPoints = rangeFFTSize,
         useBitReverse  = true,
         runTime = true,
         numAddPipes = 1,
         numMulPipes = 1,
         use4Muls = true,
         //sdfRadix = "2",
-        expandLogic = Array.fill(log2Up(fftSize))(0),//(1).zipWithIndex.map { case (e,ind) => if (ind < 4) 1 else 0 }, // expand first four stages, other do not grow
-        keepMSBorLSB = Array.fill(log2Up(fftSize))(true),
-        minSRAMdepth = fftSize, // memories larger than 64 should be mapped on block ram
+        expandLogic = Array.fill(log2Up(rangeFFTSize))(0),//(1).zipWithIndex.map { case (e,ind) => if (ind < 4) 1 else 0 }, // expand first four stages, other do not grow
+        keepMSBorLSB = Array.fill(log2Up(rangeFFTSize))(true),
+        minSRAMdepth = rangeFFTSize, // memories larger than 64 should be mapped on block ram
         binPoint = 10
       ),
       fftAddress = AddressSet(0x60001100, 0xFF)
@@ -181,7 +192,7 @@ class RSPChainParams(fftSize: Int = 1024) {
         leadLaggWindowSize = 64,
         guardWindowSize = 8,
         logOrLinReg = false,
-        fftSize = fftSize,
+        fftSize = rangeFFTSize,
         sendCut = true,
         minSubWindowSize = Some(4),
         includeCASH = true, //true
@@ -190,17 +201,39 @@ class RSPChainParams(fftSize: Int = 1024) {
         numMulPipes = 1                   // number of mull pipeline registers
       ),
       cfarAddress   = AddressSet(0x60001400, 0xFF),
-    ))
+    )),
+    // Doppler parameters
+    splitParams = Some(SplitParamsAndAddresses(
+      splitAddress = AddressSet(0x60001500, 0xFF)
+    )),
+    fft2DParams = Some(FFTParamsAndAddresses(
+      fftParams = FFTParams.fixed(
+        dataWidth = 16,
+        twiddleWidth = 16,
+        numPoints = dopplerFFTSize,
+        useBitReverse  = true,
+        runTime = true,
+        numAddPipes = 1,
+        numMulPipes = 1,
+        use4Muls = true,
+        //sdfRadix = "2",
+        expandLogic = Array.fill(log2Up(dopplerFFTSize))(0),//(1).zipWithIndex.map { case (e,ind) => if (ind < 4) 1 else 0 }, // expand first four stages, other do not grow
+        keepMSBorLSB = Array.fill(log2Up(dopplerFFTSize))(true),
+        minSRAMdepth = dopplerFFTSize, // memories larger than 64 should be mapped on block ram
+        binPoint = 10
+      ),
+      fftAddress = AddressSet(0x60001600, 0xFF)
+    )),
   )
 }
 
-object RSPChainApp extends App
+object SpaceFFTApp extends App
 {
   implicit val p: Parameters = Parameters.empty
 
-  val params = (new RSPChainParams).params
-  val lazyDut = LazyModule(new AXI4RSPChain(params, 4) with AXI4RSPChainPins)
+  val params = (new SpaceFFTParams).params
+  val lazyDut = LazyModule(new AXI4SpaceFFT(params, 4) with AXI4SpaceFFTPins)
 
-  (new ChiselStage).execute(Array("--target-dir", "verilog/RSPChain"), Seq(ChiselGeneratorAnnotation(() => lazyDut.module)))
+  (new ChiselStage).execute(Array("--target-dir", "verilog/SpaceFFT"), Seq(ChiselGeneratorAnnotation(() => lazyDut.module)))
 }
 

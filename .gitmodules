@@ -14,10 +14,6 @@
 	path = generators/logMagMux
 	url = https://github.com/milovanovic/logMagMux.git
 	branch = master
-[submodule "generators/dsp-utils"]
-	path = generators/dsp-utils
-	url = git@github.com:milovanovic/dsp-utils.git
-	branch = master
 [submodule "accumulator"]
 	branch = development
 [submodule "generators/accumulator"]

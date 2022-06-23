@@ -16,8 +16,8 @@ import freechips.rocketchip.config.{Parameters}
 import freechips.rocketchip.diplomacy._
 
 import spacefft.ddrwrapper._
-import spacefft.splitter._
-import spacefft.queue._
+
+import dsputils._
 
 import fft._
 import windowing._
@@ -368,7 +368,7 @@ class SpaceFFTParams(rangeFFTSize: Int = 512, dopplerFFTSize: Int = 256) {
       winParams = WindowingParams.fixed(
         numPoints = rangeFFTSize,
         dataWidth = 16,
-        binPoint  = 10,
+        binPoint  = 14,
         numMulPipes = 1,
         dirName = "test_run_dir",
         memoryFile = "./test_run_dir/blacman.txt",
@@ -391,17 +391,17 @@ class SpaceFFTParams(rangeFFTSize: Int = 512, dopplerFFTSize: Int = 256) {
         expandLogic = Array.fill(log2Up(rangeFFTSize))(0),//(1).zipWithIndex.map { case (e,ind) => if (ind < 4) 1 else 0 }, // expand first four stages, other do not grow
         keepMSBorLSB = Array.fill(log2Up(rangeFFTSize))(true),
         minSRAMdepth = rangeFFTSize, // memories larger than 64 should be mapped on block ram
-        binPoint = 10
+        binPoint = 14
       ),
       fftAddress = AddressSet(0x60001100, 0xFF)
     )),
     mag1DParams = Some(MagParamsAndAddresses(
       magParams = MAGParams(
-        protoIn  = FixedPoint(16.W, 10.BP),
-        protoOut = FixedPoint(16.W, 10.BP),
-        protoLog = Some(FixedPoint(16.W, 10.BP)),
+        protoIn  = FixedPoint(16.W, 14.BP),
+        protoOut = FixedPoint(16.W, 14.BP),
+        protoLog = Some(FixedPoint(16.W, 14.BP)),
         magType  = MagJPLandSqrMag,
-        log2LookUpWidth = 10,
+        log2LookUpWidth = 14,
         useLast = true,
         numAddPipes = 1,
         numMulPipes = 1
@@ -410,24 +410,25 @@ class SpaceFFTParams(rangeFFTSize: Int = 512, dopplerFFTSize: Int = 256) {
     )),
     acc1DParams = Some(AccParamsAndAddresses(
       accParams = AccParams(
-        proto    = FixedPoint(16.W, 10.BP),
-        protoAcc = FixedPoint(32.W, 10.BP),
+        proto    = FixedPoint(16.W, 14.BP),
+        protoAcc = FixedPoint(32.W, 14.BP),
       ),
       accAddress   = AddressSet(0x60001300, 0xFF),
       accQueueBase = 0x60002000
     )),
     cfar1DParams = Some(CFARParamsAndAddresses(
       cfarParams = CFARParams(
-        protoIn = FixedPoint(16.W, 10.BP),
-        protoThreshold = FixedPoint(16.W, 10.BP),
-        protoScaler = FixedPoint(16.W, 10.BP),
+        protoIn = FixedPoint(16.W, 14.BP),
+        protoThreshold = FixedPoint(16.W, 14.BP),
+        protoScaler = FixedPoint(16.W, 14.BP),
         leadLaggWindowSize = 64,
         guardWindowSize = 8,
         logOrLinReg = false,
+        retiming = false,
         fftSize = rangeFFTSize,
         sendCut = true,
-        minSubWindowSize = Some(4),
-        includeCASH = true, //true
+        minSubWindowSize = None,
+        includeCASH = false,
         CFARAlgorithm = CACFARType,
         numAddPipes = 1,                  // number of add pipeline registers
         numMulPipes = 1                   // number of mull pipeline registers
@@ -462,17 +463,17 @@ class SpaceFFTParams(rangeFFTSize: Int = 512, dopplerFFTSize: Int = 256) {
         expandLogic = Array.fill(log2Up(dopplerFFTSize))(0),//(1).zipWithIndex.map { case (e,ind) => if (ind < 4) 1 else 0 }, // expand first four stages, other do not grow
         keepMSBorLSB = Array.fill(log2Up(dopplerFFTSize))(true),
         minSRAMdepth = dopplerFFTSize, // memories larger than 64 should be mapped on block ram
-        binPoint = 10
+        binPoint = 14
       ),
       fftAddress = AddressSet(0x60001600, 0xFF)
     )),
     mag2DParams = Some(MagParamsAndAddresses(
       magParams = MAGParams(
-        protoIn  = FixedPoint(16.W, 10.BP),
-        protoOut = FixedPoint(16.W, 10.BP),
-        protoLog = Some(FixedPoint(16.W, 10.BP)),
+        protoIn  = FixedPoint(16.W, 14.BP),
+        protoOut = FixedPoint(16.W, 14.BP),
+        protoLog = Some(FixedPoint(16.W, 14.BP)),
         magType  = MagJPLandSqrMag,
-        log2LookUpWidth = 10,
+        log2LookUpWidth = 14,
         useLast = true,
         numAddPipes = 1,
         numMulPipes = 1

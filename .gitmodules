@@ -24,3 +24,11 @@
 	path = generators/accumulator
 	url = https://github.com/milovanovic/accumulator.git
 	branch = development
+[submodule "generators/xWRdataPreProc"]
+	path = generators/xWRdataPreProc
+	url = https://github.com/milovanovic/xWRdataPreProc.git
+	branch = master
+[submodule "generators/chisel-crc"]
+	path = generators/chisel-crc
+	url = https://github.com/milovanovic/chisel-crc.git
+	branch = master

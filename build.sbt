@@ -59,11 +59,18 @@ lazy val accumulator = (project in file("generators/accumulator"))
 lazy val cfar = (project in file("generators/cfar"))
   .settings(commonSettings: _*)
 
-// lazy val `dsp-utils` = (project in file("generators/dsp-utils"))
-//   .settings(commonSettings: _*)
+lazy val `dsp-utils` = (project in file("generators/dsp-utils"))
+  .settings(commonSettings: _*)
+
+lazy val preproc = (project in file("generators/xWRdataPreProc"))
+  .dependsOn(`dsp-utils`)
+  .settings(commonSettings: _*)
+
+lazy val `chisel-crc` = (project in file("generators/chisel-crc"))
+  .settings(commonSettings: _*)
 
 lazy val spaceFFT = (project in file("."))
-  .dependsOn(windowing, fft, logMagMux, accumulator, cfar)
+  .dependsOn(windowing, fft, logMagMux, accumulator, cfar, preproc, `chisel-crc`, `dsp-utils`)
   .settings(commonSettings: _*)
   .settings( // Settings for scalafix
     semanticdbEnabled := true,

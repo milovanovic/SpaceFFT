@@ -19,6 +19,7 @@ import spacefft.ddrwrapper._
 
 import dsputils._
 
+import xWRDataPreProc._
 import fft._
 import windowing._
 import magnitude._
@@ -28,6 +29,7 @@ import cfar._
 /* SpaceFFT parameters */
 case class SpaceFFTParameters[T <: Data: Real: BinaryRepresentation] (
   // Range parameters
+  prep1DParams : Option[PreprocParamsAndAddresses],
   win1DParams  : Option[WinParamsAndAddresses[T]],
   fft1DParams  : Option[FFTParamsAndAddresses[T]],
   mag1DParams  : Option[MagParamsAndAddresses[T]],
@@ -40,6 +42,11 @@ case class SpaceFFTParameters[T <: Data: Real: BinaryRepresentation] (
   mag2DParams  : Option[MagParamsAndAddresses[T]]
 )
 
+/* Pre-processing parameters and addresses */
+case class PreprocParamsAndAddresses(
+  prepParams  : AXI4XwrDataPreProcParams,
+  prepAddress : AddressSet
+)
 /* Windows parameters and addresses */
 case class WinParamsAndAddresses[T <: Data: Real: BinaryRepresentation] (
   winParams     : WindowingParams[T],
@@ -92,6 +99,7 @@ abstract class SpaceFFT [T <: Data : Real: BinaryRepresentation, D, U, E, O, B <
   type Block = AXI4DspBlock
 
   /* Range */
+  val preproc : Option[Block] = if (params.prep1DParams != None) Some(LazyModule(new AXI4xWRdataPreProcBlock(params.prep1DParams.get.prepAddress, params.prep1DParams.get.prepParams, beatBytes))) else None
   val win_1D  : Option[Block] = if (params.win1DParams  != None) Some(LazyModule(new WindowingBlock(csrAddress = params.win1DParams.get.winCSRAddress, ramAddress = params.win1DParams.get.winRAMAddress, params.win1DParams.get.winParams, beatBytes = beatBytes))) else None
   val fft_1D  : Option[Block] = if (params.fft1DParams  != None) Some(LazyModule(new AXI4FFTBlock(address = params.fft1DParams.get.fftAddress, params = params.fft1DParams.get.fftParams, _beatBytes = beatBytes, configInterface = false))) else None
   val mag_1D  : Option[Block] = if (params.mag1DParams  != None) Some(LazyModule(new AXI4LogMagMuxBlock(params.mag1DParams.get.magParams, params.mag1DParams.get.magAddress, _beatBytes = beatBytes))) else None
@@ -99,16 +107,16 @@ abstract class SpaceFFT [T <: Data : Real: BinaryRepresentation, D, U, E, O, B <
   val cfar_1D : Option[Block] = if (params.cfar1DParams != None) Some(LazyModule(new AXI4CFARBlock(params.cfar1DParams.get.cfarParams, params.cfar1DParams.get.cfarAddress, _beatBytes = beatBytes))) else None
   
   /* Doppler */
-  val fft_2D : Option[Block] = if (params.fft2DParams != None) Some(LazyModule(new AXI4FFTBlock(address = params.fft2DParams.get.fftAddress, params = params.fft2DParams.get.fftParams, _beatBytes = beatBytes, configInterface = false))) else None
-  val mag_2D : Option[Block] = if (params.mag2DParams != None && params.fft2DParams != None) Some(LazyModule(new AXI4LogMagMuxBlock(params.mag2DParams.get.magParams, params.mag2DParams.get.magAddress, _beatBytes = beatBytes))) else None
+  val fft_2D : Option[Block] = if (params.fft1DParams != None && params.fft2DParams != None) Some(LazyModule(new AXI4FFTBlock(address = params.fft2DParams.get.fftAddress, params = params.fft2DParams.get.fftParams, _beatBytes = beatBytes, configInterface = false))) else None
+  val mag_2D : Option[Block] = if (params.mag2DParams != None && params.fft1DParams != None && params.fft2DParams != None) Some(LazyModule(new AXI4LogMagMuxBlock(params.mag2DParams.get.magParams, params.mag2DParams.get.magAddress, _beatBytes = beatBytes))) else None
   
-  val split = if (params.fft2DParams != None) Some(LazyModule(new AXI4Splitter(address = params.splitParams.get.splitAddress, beatBytes){
+  val split = if (params.fft1DParams != None && params.fft2DParams != None) Some(LazyModule(new AXI4Splitter(address = params.splitParams.get.splitAddress, beatBytes){
     val ioOutNode = BundleBridgeSink[AXI4StreamBundle]()
     ioOutNode := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := streamNode
     val out = InModuleBody { ioOutNode.makeIO() }
   })) else None
   
-  val queue = if (params.fft2DParams  != None) Some(LazyModule(new AXI4DspQueueWithSyncReadMem(params.queueParams.get.queueParams, params.queueParams.get.queueAddress, _beatBytes = beatBytes){
+  val queue = if (params.fft1DParams != None && params.fft2DParams != None) Some(LazyModule(new AXI4DspQueueWithSyncReadMem(params.queueParams.get.queueParams, params.queueParams.get.queueAddress, _beatBytes = beatBytes){
     // streamNode
     val ioInNode = BundleBridgeSource(() => new AXI4StreamBundle(AXI4StreamBundleParameters(n = beatBytes)))
     streamNode := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = beatBytes)) := ioInNode
@@ -116,7 +124,7 @@ abstract class SpaceFFT [T <: Data : Real: BinaryRepresentation, D, U, E, O, B <
   })) else None
 
   /* Blocks */
-  val blocks_1D: Seq[Block] = Seq(win_1D, fft_1D, split, mag_1D, acc_1D, cfar_1D).flatten
+  val blocks_1D: Seq[Block] = Seq(preproc, win_1D, fft_1D, split, mag_1D, acc_1D, cfar_1D).flatten
   val blocks_2D: Seq[Block] = Seq(queue, fft_2D, mag_2D).flatten
   val blocks   : Seq[Block] = blocks_1D ++ blocks_2D
   require(blocks_1D.length >= 1, "At least one block should exist")
@@ -364,6 +372,10 @@ trait AXI4SpaceFFTPins extends AXI4SpaceFFT[FixedPoint] {
 class SpaceFFTParams(rangeFFTSize: Int = 512, dopplerFFTSize: Int = 256) {
   val params : SpaceFFTParameters[FixedPoint] = SpaceFFTParameters (
     // Range parameters
+    prep1DParams = Some(PreprocParamsAndAddresses(
+      prepParams = AXI4XwrDataPreProcParams(maxFFTSize = rangeFFTSize, useBlockRam = true),
+      prepAddress = AddressSet(0x60000000, 0xFF)
+    )),
     win1DParams = Some(WinParamsAndAddresses(
       winParams = WindowingParams.fixed(
         numPoints = rangeFFTSize,
@@ -374,8 +386,8 @@ class SpaceFFTParams(rangeFFTSize: Int = 512, dopplerFFTSize: Int = 256) {
         memoryFile = "./test_run_dir/blacman.txt",
         windowFunc = windowing.WindowFunctionTypes.Blackman(dataWidth_tmp = 16)
       ),
-      winRAMAddress = AddressSet(0x60000000, 0xFFF),
-      winCSRAddress = AddressSet(0x60001000, 0xFF)
+      winRAMAddress = AddressSet(0x60001000, 0xFFF),
+      winCSRAddress = AddressSet(0x60000100, 0xFF)
     )),
     fft1DParams = Some(FFTParamsAndAddresses(
       fftParams = FFTParams.fixed(
@@ -393,7 +405,7 @@ class SpaceFFTParams(rangeFFTSize: Int = 512, dopplerFFTSize: Int = 256) {
         minSRAMdepth = rangeFFTSize, // memories larger than 64 should be mapped on block ram
         binPoint = 14
       ),
-      fftAddress = AddressSet(0x60001100, 0xFF)
+      fftAddress = AddressSet(0x60000200, 0xFF)
     )),
     mag1DParams = Some(MagParamsAndAddresses(
       magParams = MAGParams(
@@ -406,14 +418,14 @@ class SpaceFFTParams(rangeFFTSize: Int = 512, dopplerFFTSize: Int = 256) {
         numAddPipes = 1,
         numMulPipes = 1
       ),
-      magAddress = AddressSet(0x60001200, 0xFF),
+      magAddress = AddressSet(0x60000300, 0xFF),
     )),
     acc1DParams = Some(AccParamsAndAddresses(
       accParams = AccParams(
         proto    = FixedPoint(16.W, 14.BP),
         protoAcc = FixedPoint(32.W, 14.BP),
       ),
-      accAddress   = AddressSet(0x60001300, 0xFF),
+      accAddress   = AddressSet(0x60000400, 0xFF),
       accQueueBase = 0x60002000
     )),
     cfar1DParams = Some(CFARParamsAndAddresses(
@@ -433,7 +445,7 @@ class SpaceFFTParams(rangeFFTSize: Int = 512, dopplerFFTSize: Int = 256) {
         numAddPipes = 1,                  // number of add pipeline registers
         numMulPipes = 1                   // number of mull pipeline registers
       ),
-      cfarAddress   = AddressSet(0x60001400, 0xFF),
+      cfarAddress   = AddressSet(0x60000500, 0xFF),
     )),
     // Doppler parameters
     queueParams = Some(QueueParamsAndAddresses(
@@ -447,7 +459,7 @@ class SpaceFFTParams(rangeFFTSize: Int = 512, dopplerFFTSize: Int = 256) {
       queueAddress = AddressSet(0x60003000, 0xFFF)
     )),
     splitParams = Some(SplitParamsAndAddresses(
-      splitAddress = AddressSet(0x60001500, 0xFF)
+      splitAddress = AddressSet(0x60000600, 0xFF)
     )),
     fft2DParams = Some(FFTParamsAndAddresses(
       fftParams = FFTParams.fixed(
@@ -465,7 +477,7 @@ class SpaceFFTParams(rangeFFTSize: Int = 512, dopplerFFTSize: Int = 256) {
         minSRAMdepth = dopplerFFTSize, // memories larger than 64 should be mapped on block ram
         binPoint = 14
       ),
-      fftAddress = AddressSet(0x60001600, 0xFF)
+      fftAddress = AddressSet(0x60000700, 0xFF)
     )),
     mag2DParams = Some(MagParamsAndAddresses(
       magParams = MAGParams(
@@ -478,7 +490,7 @@ class SpaceFFTParams(rangeFFTSize: Int = 512, dopplerFFTSize: Int = 256) {
         numAddPipes = 1,
         numMulPipes = 1
       ),
-      magAddress = AddressSet(0x60001700, 0xFF),
+      magAddress = AddressSet(0x60000800, 0xFF),
     )),
   )
 }

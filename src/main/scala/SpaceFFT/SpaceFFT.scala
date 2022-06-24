@@ -102,9 +102,6 @@ class AXI4SpaceFFT[T <: Data : Real: BinaryRepresentation](params: SpaceFFTParam
 
 abstract class SpaceFFT [T <: Data : Real: BinaryRepresentation, D, U, E, O, B <: Data] (params: SpaceFFTParameters[T], beatBytes: Int) extends LazyModule()(Parameters.empty) with DspBlock[D, U, E, O, B] {
 
-  /* Type of Blocks */
-  type Block = AXI4DspBlock
-
   /* Range */
   val crc_1D  = if (params.crc1DParams  != None) Some(LazyModule(new AXI4MiltipleCrcBlock(params.crc1DParams.get.crcParams, params.crc1DParams.get.crcAddress, beatBytes){
     // pins
@@ -116,16 +113,16 @@ abstract class SpaceFFT [T <: Data : Real: BinaryRepresentation, D, U, E, O, B <
     }
     val ioBlock = InModuleBody { makeCustomIO() }
   })) else None
-  val preproc : Option[Block] = if (params.prep1DParams != None) Some(LazyModule(new AXI4xWRdataPreProcBlock(params.prep1DParams.get.prepAddress, params.prep1DParams.get.prepParams, beatBytes))) else None
-  val win_1D  : Option[Block] = if (params.win1DParams  != None) Some(LazyModule(new WindowingBlock(csrAddress = params.win1DParams.get.winCSRAddress, ramAddress = params.win1DParams.get.winRAMAddress, params.win1DParams.get.winParams, beatBytes = beatBytes))) else None
-  val fft_1D  : Option[Block] = if (params.fft1DParams  != None) Some(LazyModule(new AXI4FFTBlock(address = params.fft1DParams.get.fftAddress, params = params.fft1DParams.get.fftParams, _beatBytes = beatBytes, configInterface = false))) else None
-  val mag_1D  : Option[Block] = if (params.mag1DParams  != None) Some(LazyModule(new AXI4LogMagMuxBlock(params.mag1DParams.get.magParams, params.mag1DParams.get.magAddress, _beatBytes = beatBytes))) else None
-  val acc_1D  : Option[Block] = if (params.acc1DParams  != None) Some(LazyModule(new AXI4AccChainBlock(params.acc1DParams.get.accParams, params.acc1DParams.get.accAddress, params.acc1DParams.get.accQueueBase, beatBytes))) else None
-  val cfar_1D : Option[Block] = if (params.cfar1DParams != None) Some(LazyModule(new AXI4CFARBlock(params.cfar1DParams.get.cfarParams, params.cfar1DParams.get.cfarAddress, _beatBytes = beatBytes))) else None
+  val preproc = if (params.prep1DParams != None) Some(LazyModule(new AXI4xWRdataPreProcBlock(params.prep1DParams.get.prepAddress, params.prep1DParams.get.prepParams, beatBytes))) else None
+  val win_1D  = if (params.win1DParams  != None) Some(LazyModule(new WindowingBlock(csrAddress = params.win1DParams.get.winCSRAddress, ramAddress = params.win1DParams.get.winRAMAddress, params.win1DParams.get.winParams, beatBytes = beatBytes))) else None
+  val fft_1D  = if (params.fft1DParams  != None) Some(LazyModule(new AXI4FFTBlock(address = params.fft1DParams.get.fftAddress, params = params.fft1DParams.get.fftParams, _beatBytes = beatBytes, configInterface = false))) else None
+  val mag_1D  = if (params.mag1DParams  != None) Some(LazyModule(new AXI4LogMagMuxBlock(params.mag1DParams.get.magParams, params.mag1DParams.get.magAddress, _beatBytes = beatBytes))) else None
+  val acc_1D  = if (params.acc1DParams  != None) Some(LazyModule(new AXI4AccChainBlock(params.acc1DParams.get.accParams, params.acc1DParams.get.accAddress, params.acc1DParams.get.accQueueBase, beatBytes))) else None
+  val cfar_1D = if (params.cfar1DParams != None) Some(LazyModule(new AXI4CFARBlock(params.cfar1DParams.get.cfarParams, params.cfar1DParams.get.cfarAddress, _beatBytes = beatBytes))) else None
   
   /* Doppler */
-  val fft_2D : Option[Block] = if (params.fft1DParams != None && params.fft2DParams != None) Some(LazyModule(new AXI4FFTBlock(address = params.fft2DParams.get.fftAddress, params = params.fft2DParams.get.fftParams, _beatBytes = beatBytes, configInterface = false))) else None
-  val mag_2D : Option[Block] = if (params.mag2DParams != None && params.fft1DParams != None && params.fft2DParams != None) Some(LazyModule(new AXI4LogMagMuxBlock(params.mag2DParams.get.magParams, params.mag2DParams.get.magAddress, _beatBytes = beatBytes))) else None
+  val fft_2D = if (params.fft1DParams != None && params.fft2DParams != None) Some(LazyModule(new AXI4FFTBlock(address = params.fft2DParams.get.fftAddress, params = params.fft2DParams.get.fftParams, _beatBytes = beatBytes, configInterface = false))) else None
+  val mag_2D = if (params.mag2DParams != None && params.fft1DParams != None && params.fft2DParams != None) Some(LazyModule(new AXI4LogMagMuxBlock(params.mag2DParams.get.magParams, params.mag2DParams.get.magAddress, _beatBytes = beatBytes))) else None
   
   val split = if (params.fft1DParams != None && params.fft2DParams != None) Some(LazyModule(new AXI4Splitter(address = params.splitParams.get.splitAddress, beatBytes){
     val ioOutNode = BundleBridgeSink[AXI4StreamBundle]()
@@ -141,9 +138,9 @@ abstract class SpaceFFT [T <: Data : Real: BinaryRepresentation, D, U, E, O, B <
   })) else None
 
   /* Blocks */
-  val blocks_1D: Seq[Block] = Seq(crc_1D, preproc, win_1D, fft_1D, split, mag_1D, acc_1D, cfar_1D).flatten
-  val blocks_2D: Seq[Block] = Seq(queue, fft_2D, mag_2D).flatten
-  val blocks   : Seq[Block] = blocks_1D ++ blocks_2D
+  val blocks_1D = Seq(crc_1D, preproc, win_1D, fft_1D, split, mag_1D, acc_1D, cfar_1D).flatten
+  val blocks_2D = Seq(queue, fft_2D, mag_2D).flatten
+  val blocks    = blocks_1D ++ blocks_2D
   require(blocks_1D.length >= 1, "At least one block should exist")
   
   /* Connect nodes */

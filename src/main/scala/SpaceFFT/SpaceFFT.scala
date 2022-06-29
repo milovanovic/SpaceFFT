@@ -222,7 +222,7 @@ abstract class SpaceFFT [T <: Data : Real: BinaryRepresentation, D, U, E, O, B <
   }
 
   /* Optional streamNode */
-  val streamNode = NodeHandle(blocks_1D.head.streamNode, blocks_1D.last.streamNode)
+  val streamNode = if(lvdsphy != None) blocks_1D.last.streamNode else NodeHandle(blocks_1D.head.streamNode, blocks_1D.last.streamNode)
 
   /* Optional CRC pins */
   lazy val io = Wire(new SpaceFFTIO(lvdsphy != None, crc_1D != None))

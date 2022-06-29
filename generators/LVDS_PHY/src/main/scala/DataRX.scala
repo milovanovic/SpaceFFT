@@ -81,7 +81,8 @@ abstract class DataRX[D, U, E, O, B <: Data] (val params: DataRXParams) extends 
   })) else None
 
   // StreamNode
-  lazy val streamNode = AXI4StreamMasterNode(AXI4StreamMasterParameters(name = "outStream", n = params.channels*2, u = 0, numMasters = 1))
+  val streamNode = AXI4StreamMasterNode(AXI4StreamMasterParameters(name = "outStream", n = params.channels*2, u = 0, numMasters = 1))
+  
 
   lazy val module = new LazyModuleImp(this) {
     val out = streamNode.out(0)._1

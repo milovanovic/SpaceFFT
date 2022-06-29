@@ -19,6 +19,7 @@ import spacefft.ddrwrapper._
 
 import dsputils._
 
+import lvdsphy._
 import crc._
 import xWRDataPreProc._
 import fft._
@@ -30,6 +31,7 @@ import cfar._
 /* SpaceFFT parameters */
 case class SpaceFFTParameters[T <: Data: Real: BinaryRepresentation] (
   // Range parameters
+  lvds1DParams : Option[LVDSPHYParamsAndAddresses],
   crc1DParams  : Option[CRCParamsAndAddresses],
   prep1DParams : Option[PreprocParamsAndAddresses],
   win1DParams  : Option[WinParamsAndAddresses[T]],
@@ -44,6 +46,10 @@ case class SpaceFFTParameters[T <: Data: Real: BinaryRepresentation] (
   mag2DParams  : Option[MagParamsAndAddresses[T]]
 )
 
+/* LVDS-PHY parameters and addresses */
+case class LVDSPHYParamsAndAddresses (
+  lvdsphyParams : DataRXParams,
+)
 /* CRC parameters and addresses */
 case class CRCParamsAndAddresses(
   crcParams  : MiltipleCrcBlockParams,
@@ -100,9 +106,71 @@ class AXI4SpaceFFT[T <: Data : Real: BinaryRepresentation](params: SpaceFFTParam
   }
 }
 
+class SpaceFFTIO(phy: Boolean, crc: Boolean) extends Bundle {
+  val i_data   = if (phy) Some(Input(UInt(8.W))) else None
+  val i_valid  = if (phy) Some(Input(UInt(8.W))) else None
+  val i_frame  = if (phy) Some(Input(UInt(8.W))) else None
+
+  // asyncFIFO signals
+  val i_async_clock = if (phy) Some(Input(Clock())) else None
+  val i_async_reset = if (phy) Some(Input(Bool())) else None
+
+  val word_size = if (crc == true && phy == false) Some(Input(UInt(2.W))) else None
+  val crc_en    = if (crc == true && phy == false) Some(Input(UInt(1.W))) else None
+
+  override def cloneType: this.type = SpaceFFTIO(phy, crc).asInstanceOf[this.type]
+}
+object SpaceFFTIO {
+  def apply(phy: Boolean, crc: Boolean): SpaceFFTIO = new SpaceFFTIO(phy, crc)
+}
+
+trait AXI4SpaceFFTPins extends AXI4SpaceFFT[FixedPoint] {
+  def beatBytes: Int = 4
+
+  // Generate AXI4 slave output
+  def standaloneParams = AXI4BundleParameters(addrBits = beatBytes*8, dataBits = beatBytes*8, idBits = 1)
+  val ioMem = mem.map { m => {
+    val ioMemNode = BundleBridgeSource(() => AXI4Bundle(standaloneParams))
+    m := BundleBridgeToAXI4(AXI4MasterPortParameters(Seq(AXI4MasterParameters("bundleBridgeToAXI4")))) := ioMemNode
+    val ioMem = InModuleBody { ioMemNode.makeIO() }
+    ioMem
+  }}
+
+  // streamNode
+  val ioInNode_1D  = if (lvdsphy == None) Some(BundleBridgeSource(() => new AXI4StreamBundle(AXI4StreamBundleParameters(n = beatBytes)))) else None
+  val ioOutNode_1D = BundleBridgeSink[AXI4StreamBundle]()
+  val ioOutNode_2D = BundleBridgeSink[AXI4StreamBundle]()
+
+  if (ioInNode_1D != None) { streamNode := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = beatBytes)) := ioInNode_1D.get }
+  ioOutNode_1D := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := streamNode
+  ioOutNode_2D := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := blocks_2D.last.streamNode
+
+  val in_1D = if (ioInNode_1D != None) InModuleBody { ioInNode_1D.get.makeIO() } else None
+  val out_1D = InModuleBody { ioOutNode_1D.makeIO() }
+  val out_2D = InModuleBody { ioOutNode_2D.makeIO() }
+
+  // pins
+  def makeSpaceFFTIO(): SpaceFFTIO = {
+    val io2: SpaceFFTIO = IO(io.cloneType)
+    io2.suggestName("io")
+    io2 <> io
+    io2
+  }
+  val ioBlock = if (lvdsphy != None || crc_1D != None) InModuleBody { makeSpaceFFTIO() } else None
+}
+
 abstract class SpaceFFT [T <: Data : Real: BinaryRepresentation, D, U, E, O, B <: Data] (params: SpaceFFTParameters[T], beatBytes: Int) extends LazyModule()(Parameters.empty) with DspBlock[D, U, E, O, B] {
 
   /* Range */
+  val lvdsphy = if (params.lvds1DParams != None) Some(LazyModule(new AXI4StreamDataRX(params.lvds1DParams.get.lvdsphyParams){
+      def makeCustomIO(): DataRXIO = {
+      val io2: DataRXIO = IO(io.cloneType)
+      io2.suggestName("io")
+      io2 <> io
+      io2
+    }
+    val ioBlock = InModuleBody { makeCustomIO() }
+  })) else None
   val crc_1D  = if (params.crc1DParams  != None) Some(LazyModule(new AXI4MiltipleCrcBlock(params.crc1DParams.get.crcParams, params.crc1DParams.get.crcAddress, beatBytes){
     // pins
     def makeCustomIO(): MiltipleCrcBlockIO = {
@@ -138,7 +206,7 @@ abstract class SpaceFFT [T <: Data : Real: BinaryRepresentation, D, U, E, O, B <
   })) else None
 
   /* Blocks */
-  val blocks_1D = Seq(crc_1D, preproc, win_1D, fft_1D, split, mag_1D, acc_1D, cfar_1D).flatten
+  val blocks_1D = Seq(lvdsphy, crc_1D, preproc, win_1D, fft_1D, split, mag_1D, acc_1D, cfar_1D).flatten
   val blocks_2D = Seq(queue, fft_2D, mag_2D).flatten
   val blocks    = blocks_1D ++ blocks_2D
   require(blocks_1D.length >= 1, "At least one block should exist")
@@ -157,12 +225,34 @@ abstract class SpaceFFT [T <: Data : Real: BinaryRepresentation, D, U, E, O, B <
   val streamNode = NodeHandle(blocks_1D.head.streamNode, blocks_1D.last.streamNode)
 
   /* Optional CRC pins */
-  lazy val io = if (crc_1D != None) Some(crc_1D.get.ioBlock) else None
+  lazy val io = Wire(new SpaceFFTIO(lvdsphy != None, crc_1D != None))
 
   /* Module */
   lazy val module = new LazyModuleImp(this) {
-    /* If doppler FFT exists, generate wrapper */
+    /* If LVDS PHY exists, connect pins */
+    if (lvdsphy != None) {
+      lvdsphy.get.ioBlock.i_data(0) := io.i_data.get
+      lvdsphy.get.ioBlock.i_frame := io.i_frame.get
+      lvdsphy.get.ioBlock.i_valid := io.i_valid.get
 
+      lvdsphy.get.ioBlock.i_async_clock.get := clock
+      lvdsphy.get.ioBlock.i_async_reset.get := reset
+
+      lvdsphy.get.module.clock := io.i_async_clock.get
+      lvdsphy.get.module.reset := io.i_async_reset.get
+      /* If CRC exists, connect pins */
+      if (crc_1D != None) {
+        if (crc_1D.get.ioBlock.word_size != None) { crc_1D.get.ioBlock.word_size.get := lvdsphy.get.ioBlock.o_word_size }
+        if (crc_1D.get.ioBlock.crc_en != None) { crc_1D.get.ioBlock.crc_en.get := lvdsphy.get.ioBlock.o_crc }
+      }
+    }
+    /* If CRC exists, connect pins */
+    else if (crc_1D != None) {
+      if (crc_1D.get.ioBlock.word_size != None) { crc_1D.get.ioBlock.word_size.get := io.word_size.get }
+      if (crc_1D.get.ioBlock.crc_en != None) { crc_1D.get.ioBlock.crc_en.get := io.crc_en.get }
+    }
+
+    /* If doppler FFT exists, generate wrapper */
     val mem_reset = if (params.fft1DParams != None && params.fft2DParams != None) Some(IO(Input(Bool()))) else None
     val reset_n   = if (params.fft1DParams != None && params.fft2DParams != None) Some(IO(Input(Bool()))) else None
 
@@ -363,44 +453,20 @@ abstract class SpaceFFT [T <: Data : Real: BinaryRepresentation, D, U, E, O, B <
   }
 }
 
-trait AXI4SpaceFFTPins extends AXI4SpaceFFT[FixedPoint] {
-  def beatBytes: Int = 4
-
-  // Generate AXI4 slave output
-  def standaloneParams = AXI4BundleParameters(addrBits = beatBytes*8, dataBits = beatBytes*8, idBits = 1)
-  val ioMem = mem.map { m => {
-    val ioMemNode = BundleBridgeSource(() => AXI4Bundle(standaloneParams))
-    m := BundleBridgeToAXI4(AXI4MasterPortParameters(Seq(AXI4MasterParameters("bundleBridgeToAXI4")))) := ioMemNode
-    val ioMem = InModuleBody { ioMemNode.makeIO() }
-    ioMem
-  }}
-
-  // streamNode
-  val ioInNode_1D  = BundleBridgeSource(() => new AXI4StreamBundle(AXI4StreamBundleParameters(n = beatBytes)))
-  val ioOutNode_1D = BundleBridgeSink[AXI4StreamBundle]()
-  val ioOutNode_2D = BundleBridgeSink[AXI4StreamBundle]()
-
-  ioOutNode_1D := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := streamNode := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = beatBytes)) := ioInNode_1D
-  ioOutNode_2D := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := blocks_2D.last.streamNode
-
-  val in_1D = InModuleBody { ioInNode_1D.makeIO() }
-  val out_1D = InModuleBody { ioOutNode_1D.makeIO() }
-  val out_2D = InModuleBody { ioOutNode_2D.makeIO() }
-
-  // pins
-  def makeCustomIO(): MiltipleCrcBlockIO = {
-    val io2: MiltipleCrcBlockIO = IO(io.get.cloneType)
-    io2.suggestName("io")
-    io2 <> io.get
-    io2
-  }
-  val ioBlock = if(crc_1D != None) InModuleBody { makeCustomIO() } else None
-}
-
-
 class SpaceFFTParams(rangeFFTSize: Int = 512, dopplerFFTSize: Int = 256) {
   val params : SpaceFFTParameters[FixedPoint] = SpaceFFTParameters (
     // Range parameters
+    lvds1DParams = Some(LVDSPHYParamsAndAddresses(
+      lvdsphyParams = DataRXParams(
+        channels = 1,
+        asyncParams = Some(AXI4StreamAsyncQueueWithControlParams(
+          ctrlBits   = 3,
+          sync       = 4,
+          depth      = 32,
+          safe       = true
+        ))
+      )
+    )),
     crc1DParams = Some(CRCParamsAndAddresses(
       crcParams = MiltipleCrcBlockParams(
         crcParams16 = Some(RadarCRCParams(dataWidth = 16)),

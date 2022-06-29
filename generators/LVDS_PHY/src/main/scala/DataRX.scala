@@ -7,7 +7,9 @@ import chisel3.util.{Cat, ShiftRegister}
 import chisel3.stage.{ChiselGeneratorAnnotation, ChiselStage}
 import chisel3.experimental.IO
 
+import dspblocks._
 import freechips.rocketchip.diplomacy._
+import freechips.rocketchip.amba.axi4._
 import freechips.rocketchip.amba.axi4stream._
 import freechips.rocketchip.config.Parameters
 
@@ -30,10 +32,7 @@ class DataRXIO(channels: Int, async: Boolean) extends Bundle {
   val o_word_size = Output(UInt(2.W))
   // asyncFIFO signals
   val i_async_clock = if (async) Some(Input(Clock())) else None
-  val i_async_reset = if (async) Some(Input(Reset())) else None
-
-  // ASYNC FIRE signal
-  val fire = if (async) Some(Output(Bool())) else None
+  val i_async_reset = if (async) Some(Input(Bool())) else None
 
   override def cloneType: this.type = DataRXIO(channels, async).asInstanceOf[this.type]
 }
@@ -41,7 +40,27 @@ object DataRXIO {
   def apply(channels: Int, async: Boolean): DataRXIO = new DataRXIO(channels, async)
 }
 
-class DataRX(val params: DataRXParams) extends LazyModule()(Parameters.empty) {
+class AXI4StreamDataRX(params: DataRXParams)(implicit p: Parameters) extends DataRX[AXI4MasterPortParameters, AXI4SlavePortParameters, AXI4EdgeParameters, AXI4EdgeParameters, AXI4Bundle](params) with AXI4DspBlock {
+  override val mem = None
+}
+
+trait DataRXPins extends AXI4StreamDataRX{
+  // output stream node
+  val ioOutNode = BundleBridgeSink[AXI4StreamBundle]()
+  ioOutNode := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := streamNode 
+
+  val out = InModuleBody { ioOutNode.makeIO() }
+
+  def makeCustomIO(): DataRXIO = {
+    val io2: DataRXIO = IO(io.cloneType)
+    io2.suggestName("io")
+    io2 <> io
+    io2
+  }
+  val ioBlock = InModuleBody { makeCustomIO() }
+}
+
+abstract class DataRX[D, U, E, O, B <: Data] (val params: DataRXParams) extends LazyModule()(Parameters.empty) with DspBlock[D, U, E, O, B] {
 
   lazy val io = Wire(new DataRXIO(params.channels, params.asyncParams != None))
 
@@ -51,22 +70,21 @@ class DataRX(val params: DataRXParams) extends LazyModule()(Parameters.empty) {
   val bitslip       = LazyModule(new BitSlipDetection with BitSlipDetectionPins)
   val word_detector = LazyModule(new DetectWordWidth(DetectWordWidthParams(params.channels)) with DetectWordWidthPins)
   val byte2word     = LazyModule(new Byte2Word(Byte2WordParams(params.channels)) with Byte2WordPins)
-  val asyncQueue    = if (params.asyncParams != None ) Some(LazyModule(new AXI4StreamAsyncQueueWithControl(params.asyncParams.get){
-    // pins
-    def makeCustomIO(): AXI4StreamAsyncQueueWithControlIO = {
-      val io2: AXI4StreamAsyncQueueWithControlIO = IO(io.cloneType)
-      io2.suggestName("io")
-      io2 <> io
-      io2
-    }
-    val ioBlock = InModuleBody { makeCustomIO() }
+  val asyncQueue    = if (params.asyncParams != None ) Some(LazyModule(new AXI4StreamAsyncQueueWithControlBlock(params.asyncParams.get){
+    def beatBytes: Int = params.channels*2
+    val ioInNode  = BundleBridgeSource(() => new AXI4StreamBundle(AXI4StreamBundleParameters(n = beatBytes)))
+    val ioOutNode = BundleBridgeSink[AXI4StreamBundle]()
+    ioOutNode := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := streamNode := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = beatBytes)) := ioInNode
+
+    val in  = InModuleBody { ioInNode.makeIO() }
+    val out = InModuleBody { ioOutNode.makeIO() }
   })) else None
 
   // StreamNode
-  lazy val streamNode = if(asyncQueue != None) asyncQueue.get.streamNode else Seq.fill(params.channels){AXI4StreamMasterNode(AXI4StreamMasterParameters(name = "outStream", n = 2, u = 0, numMasters = 1))}
+  lazy val streamNode = AXI4StreamMasterNode(AXI4StreamMasterParameters(name = "outStream", n = params.channels*2, u = 0, numMasters = 1))
 
   lazy val module = new LazyModuleImp(this) {
-    val out = if(asyncQueue == None) Some(streamNode.map(m => m.out(0)._1)) else None
+    val out = streamNode.out(0)._1
 
     // bitslip
     bitslip.ioBlock.i_data := io.i_valid
@@ -79,11 +97,6 @@ class DataRX(val params: DataRXParams) extends LazyModule()(Parameters.empty) {
       word_detector.ioBlock.i_data(i) := reorder_data(i).ioBlock.o_data
       // alligned data to word
       byte2word.ioBlock.i_data(i) := word_detector.ioBlock.o_data(i)
-      // Output
-      if(asyncQueue == None) {
-        out.get(i).bits.data := byte2word.ioBlock.o_data(i)
-        out.get(i).valid     := byte2word.ioBlock.o_en
-      }
     }
     // input data
     reorder_valid.ioBlock.i_data  := RegNext(io.i_valid, 0.U)
@@ -101,76 +114,56 @@ class DataRX(val params: DataRXParams) extends LazyModule()(Parameters.empty) {
 
     if(asyncQueue != None) {
       // AsyncQueue (Slave-Side)
-      asyncQueue.get.ioBlock.write_clock := clock
-      asyncQueue.get.ioBlock.write_reset := reset
-      asyncQueue.get.ioBlock.in_data  := Cat(byte2word.ioBlock.o_data)
-      asyncQueue.get.ioBlock.in_valid := byte2word.ioBlock.o_en
-      asyncQueue.get.ioBlock.in_ctrl  := Cat(byte2word.ioBlock.o_crc, word_detector.ioBlock.o_word_size)
+      asyncQueue.get.module.io.write_clock := clock
+      asyncQueue.get.module.io.write_reset := reset
+      asyncQueue.get.in.bits.data  := Cat(byte2word.ioBlock.o_data)
+      asyncQueue.get.in.valid := byte2word.ioBlock.o_en
+      asyncQueue.get.module.io.in_ctrl := Cat(byte2word.ioBlock.o_crc, word_detector.ioBlock.o_word_size)
       // AsyncQueue (Master-Side)
       asyncQueue.get.module.clock := io.i_async_clock.get
       asyncQueue.get.module.reset := io.i_async_reset.get
-      io.o_crc := asyncQueue.get.ioBlock.out_ctrl(byte2word.ioBlock.o_crc.getWidth + word_detector.ioBlock.o_word_size.getWidth - 1)
-      io.o_word_size := asyncQueue.get.ioBlock.out_ctrl(word_detector.ioBlock.o_word_size.getWidth - 1, 0)
+      io.o_crc := asyncQueue.get.module.io.out_ctrl(byte2word.ioBlock.o_crc.getWidth + word_detector.ioBlock.o_word_size.getWidth - 1)
+      io.o_word_size := asyncQueue.get.module.io.out_ctrl(word_detector.ioBlock.o_word_size.getWidth - 1, 0)
 
-      io.fire.get := asyncQueue.get.ioBlock.fire
+      out.valid := asyncQueue.get.out.valid
+      asyncQueue.get.out.ready := out.ready
     }
     else {
       io.o_crc := byte2word.ioBlock.o_crc
       io.o_word_size := word_detector.ioBlock.o_word_size
+      out.bits.data  := Cat(byte2word.ioBlock.o_data)
+      out.valid      := byte2word.ioBlock.o_en
     }
   }
-}
-
-trait DataRXPins extends DataRX{
-  // output stream node
-  val streamLen = streamNode.length
-
-  val ioOutNode = Seq.fill(streamLen){BundleBridgeSink[AXI4StreamBundle]()}
-
-  val outPins = for (i <- 0 until streamLen) yield {
-    ioOutNode(i) := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := streamNode(i)
-    val out = InModuleBody { 
-      implicit val valName = ValName(s"out_$i")
-      ioOutNode(i).makeIO()
-    }
-    out
-  }
-
-  def makeCustomIO(): DataRXIO = {
-    val io2: DataRXIO = IO(io.cloneType)
-    io2.suggestName("io")
-    io2 <> io
-    io2
-  }
-  val ioBlock = InModuleBody { makeCustomIO() }
 }
 
 object DataRXwithAsyncApp extends App
 {
+    implicit val p: Parameters = Parameters.empty
+
     val params = DataRXParams(
       channels = 4,
       asyncParams = Some(AXI4StreamAsyncQueueWithControlParams(
-        channels   = 4,
-        dataBytes  = 2,
         ctrlBits   = 3,
-        isFullFlag = false,
         sync       = 4,
         depth      = 2048,
         safe       = true
       ))
     )
     
-    val lazyDut = LazyModule(new DataRX(params) with DataRXPins)
+    val lazyDut = LazyModule(new AXI4StreamDataRX(params) with DataRXPins)
     (new ChiselStage).execute(Array("--target-dir", "verilog/DataRX"), Seq(ChiselGeneratorAnnotation(() => lazyDut.module)))
 }
 
 object DataRXwithoutAsyncApp extends App
 {
+    implicit val p: Parameters = Parameters.empty
+    
     val params = DataRXParams(
       channels = 4,
       asyncParams = None
     )
     
-    val lazyDut = LazyModule(new DataRX(params) with DataRXPins)
+    val lazyDut = LazyModule(new AXI4StreamDataRX(params) with DataRXPins)
     (new ChiselStage).execute(Array("--target-dir", "verilog/DataRX"), Seq(ChiselGeneratorAnnotation(() => lazyDut.module)))
 }

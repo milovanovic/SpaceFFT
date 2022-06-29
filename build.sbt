@@ -69,8 +69,12 @@ lazy val preproc = (project in file("generators/xWRdataPreProc"))
 lazy val `chisel-crc` = (project in file("generators/chisel-crc"))
   .settings(commonSettings: _*)
 
+lazy val `lvds-phy` = (project in file("generators/LVDS_PHY"))
+.dependsOn(`dsp-utils`)
+  .settings(commonSettings: _*)
+
 lazy val spaceFFT = (project in file("."))
-  .dependsOn(windowing, fft, logMagMux, accumulator, cfar, preproc, `chisel-crc`, `dsp-utils`)
+  .dependsOn(windowing, fft, logMagMux, accumulator, cfar, preproc, `chisel-crc`, `dsp-utils`, `lvds-phy`)
   .settings(commonSettings: _*)
   .settings( // Settings for scalafix
     semanticdbEnabled := true,

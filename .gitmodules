@@ -32,3 +32,7 @@
 	path = generators/dsp-utils
 	url = git@github.com:milovanovic/dsp-utils.git
 	branch = development
+[submodule "generators/jtag2mm"]
+	path = generators/jtag2mm
+	url = https://github.com/milovanovic/jtag2mm.git
+	branch = master

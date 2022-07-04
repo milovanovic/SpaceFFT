@@ -327,8 +327,8 @@ class ddr4CtrlrWrapper extends BlackBox {
       val o_MemClk_p = Output(Bool())
       val sys_clk = Input(Bool())
       //val clk_ref = Input(Bool())
-      val clk_300_p = Input(Bool())
-      val clk_300_n = Input(Bool())
+      val clk_300_p = Input(Clock())
+      val clk_300_n = Input(Clock())
       val c0_ddr4_dq  = Analog(64.W) //Input(UInt(64.W)) // should be inout
       val c0_ddr4_adr = Output(UInt(17.W))
       val c0_ddr4_ba = Output(UInt(2.W))

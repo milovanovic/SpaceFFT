@@ -156,7 +156,7 @@ trait AXI4SpaceFFTPins extends AXI4SpaceFFT[FixedPoint] {
     io2 <> io
     io2
   }
-  val ioBlock = if (lvdsphy != None || crc_1D != None) InModuleBody { makeSpaceFFTIO() } else None
+  val ioBlock = if (lvdsphy != None || crc_1D != None) Some(InModuleBody { makeSpaceFFTIO() }) else None
 }
 
 abstract class SpaceFFT [T <: Data : Real: BinaryRepresentation, D, U, E, O, B <: Data] (params: SpaceFFTParameters[T], beatBytes: Int) extends LazyModule()(Parameters.empty) with DspBlock[D, U, E, O, B] {
@@ -259,8 +259,8 @@ abstract class SpaceFFT [T <: Data : Real: BinaryRepresentation, D, U, E, O, B <
     val ddr4IO    = if (params.fft1DParams != None && params.fft2DParams != None) Some(IO(new ddr4IO())) else None
     val ethIO     = if (params.fft1DParams != None && params.fft2DParams != None) Some(IO(new ethIO_ddr4())) else None
 
-    val clk_300_p = if (params.fft1DParams != None && params.fft2DParams != None) Some(IO(Input(Bool()))) else None
-    val clk_300_n = if (params.fft1DParams != None && params.fft2DParams != None) Some(IO(Input(Bool()))) else None
+    val clk_300_p = if (params.fft1DParams != None && params.fft2DParams != None) Some(IO(Input(Clock()))) else None
+    val clk_300_n = if (params.fft1DParams != None && params.fft2DParams != None) Some(IO(Input(Clock()))) else None
 
     val c0_init_calib_complete = if (params.fft1DParams != None && params.fft2DParams != None) Some(IO(Output(Bool()))) else None
 

@@ -73,8 +73,11 @@ lazy val `lvds-phy` = (project in file("generators/LVDS_PHY"))
 .dependsOn(`dsp-utils`)
   .settings(commonSettings: _*)
 
+lazy val jtag2mm = (project in file("generators/jtag2mm"))
+  .settings(commonSettings: _*)
+
 lazy val spaceFFT = (project in file("."))
-  .dependsOn(windowing, fft, logMagMux, accumulator, cfar, preproc, `chisel-crc`, `dsp-utils`, `lvds-phy`)
+  .dependsOn(windowing, fft, logMagMux, accumulator, cfar, preproc, `chisel-crc`, `dsp-utils`, `lvds-phy`, jtag2mm)
   .settings(commonSettings: _*)
   .settings( // Settings for scalafix
     semanticdbEnabled := true,

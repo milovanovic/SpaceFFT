@@ -93,6 +93,11 @@ trait AXI4SpaceFFTPins extends AXI4SpaceFFT[FixedPoint] {
 
 abstract class SpaceFFT [T <: Data : Real: BinaryRepresentation, D, U, E, O, B <: Data] (params: SpaceFFTParameters[T], beatBytes: Int) extends LazyModule()(Parameters.empty) with DspBlock[D, U, E, O, B] {
 
+  /* DDR condition */
+  val ddrCond = params.ddrParams != None
+  /* 2D fft condition */
+  val fft2DCond = params.fft1DParams != None && params.fft2DParams != None
+
   /* Range */
   val lvdsphy = if (params.lvds1DParams != None) Some(LazyModule(new AXI4StreamDataRX(params.lvds1DParams.get.lvdsphyParams){
       def makeCustomIO(): DataRXIO = {
@@ -121,13 +126,11 @@ abstract class SpaceFFT [T <: Data : Real: BinaryRepresentation, D, U, E, O, B <
   val cfar_1D = if (params.cfar1DParams != None) Some(LazyModule(new AXI4CFARBlock(params.cfar1DParams.get.cfarParams, params.cfar1DParams.get.cfarAddress, _beatBytes = beatBytes))) else None
   
   /* Doppler */
-  val ctrl_2D = if (params.fft1DParams != None && params.fft2DParams != None && params.ddrParams == None) Some(LazyModule(new AXI4StreamFFT2ControlBlock(params.ctrl2DParams.get.ctrl2DParams, params.ctrl2DParams.get.ctrl2DAddress, _beatBytes = beatBytes))) else None
-  val fft_2D  = if (params.fft1DParams != None && params.fft2DParams != None) Some(LazyModule(new AXI4FFTBlock(address = params.fft2DParams.get.fftAddress, params = params.fft2DParams.get.fftParams, _beatBytes = beatBytes, configInterface = false))) else None
-  val mag_2D  = if (params.mag2DParams != None && params.fft1DParams != None && params.fft2DParams != None) Some(LazyModule(new AXI4LogMagMuxBlock(params.mag2DParams.get.magParams, params.mag2DParams.get.magAddress, _beatBytes = beatBytes))) else None
-  
-  // DDR condition
-  val ddrCond = params.ddrParams != None
-  val split = if (params.fft1DParams != None && params.fft2DParams != None) Some(LazyModule(new AXI4Splitter(address = params.splitParams.get.splitAddress, beatBytes){
+  val ctrl_2D = if (fft2DCond && params.ddrParams == None) Some(LazyModule(new AXI4StreamFFT2ControlBlock(params.ctrl2DParams.get.ctrl2DParams, params.ctrl2DParams.get.ctrl2DAddress, _beatBytes = beatBytes))) else None
+  val fft_2D  = if (fft2DCond) Some(LazyModule(new AXI4FFTBlock(address = params.fft2DParams.get.fftAddress, params = params.fft2DParams.get.fftParams, _beatBytes = beatBytes, configInterface = false))) else None
+  val mag_2D  = if (params.mag2DParams != None && fft2DCond) Some(LazyModule(new AXI4LogMagMuxBlock(params.mag2DParams.get.magParams, params.mag2DParams.get.magAddress, _beatBytes = beatBytes))) else None
+
+  val split = if (fft2DCond) Some(LazyModule(new AXI4Splitter(address = params.splitParams.get.splitAddress, beatBytes){
     val out = if (ddrCond) Some({
       val ioOutNode = BundleBridgeSink[AXI4StreamBundle]()
       ioOutNode := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := streamNode
@@ -135,7 +138,7 @@ abstract class SpaceFFT [T <: Data : Real: BinaryRepresentation, D, U, E, O, B <
     }) else None
   })) else None
   
-  val queue = if (params.fft1DParams != None && params.fft2DParams != None) Some(LazyModule(new AXI4DspQueueWithSyncReadMem(params.queueParams.get.queueParams, params.queueParams.get.queueAddress, _beatBytes = beatBytes){
+  val queue = if (fft2DCond) Some(LazyModule(new AXI4DspQueueWithSyncReadMem(params.queueParams.get.queueParams, params.queueParams.get.queueAddress, _beatBytes = beatBytes){
     val in = if (ddrCond) Some({
       val ioInNode = BundleBridgeSource(() => new AXI4StreamBundle(AXI4StreamBundleParameters(n = beatBytes)))
       streamNode := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = beatBytes)) := ioInNode
@@ -143,7 +146,7 @@ abstract class SpaceFFT [T <: Data : Real: BinaryRepresentation, D, U, E, O, B <
     }) else None
   })) else None
 
-  if (params.fft1DParams != None && params.fft2DParams != None && params.ddrParams == None) ctrl_2D.get.streamNode := split.get.streamNode
+  if (fft2DCond && params.ddrParams == None) ctrl_2D.get.streamNode := split.get.streamNode
 
   /* Blocks */
   val blocks_1D = Seq(lvdsphy, crc_1D, preproc, win_1D, fft_1D, split, mag_1D, acc_1D, cfar_1D).flatten
@@ -193,18 +196,18 @@ abstract class SpaceFFT [T <: Data : Real: BinaryRepresentation, D, U, E, O, B <
     }
 
     /* If doppler FFT exists, generate wrapper */
-    val mem_reset = if (params.fft1DParams != None && params.fft2DParams != None && params.ddrParams != None) Some(IO(Input(Bool()))) else None
-    val reset_n   = if (params.fft1DParams != None && params.fft2DParams != None && params.ddrParams != None) Some(IO(Input(Bool()))) else None
+    val mem_reset = if (fft2DCond && ddrCond) Some(IO(Input(Bool()))) else None
+    val reset_n   = if (fft2DCond && ddrCond) Some(IO(Input(Bool()))) else None
 
-    val ddr4IO    = if (params.fft1DParams != None && params.fft2DParams != None && params.ddrParams != None) Some(IO(new ddr4IO())) else None
-    val ethIO     = if (params.fft1DParams != None && params.fft2DParams != None && params.ddrParams != None) Some(IO(new ethIO_ddr4())) else None
+    val ddr4IO    = if (fft2DCond && ddrCond) Some(IO(new ddr4IO())) else None
+    val ethIO     = if (fft2DCond && ddrCond) Some(IO(new ethIO_ddr4())) else None
 
-    val clk_300_p = if (params.fft1DParams != None && params.fft2DParams != None && params.ddrParams != None) Some(IO(Input(Clock()))) else None
-    val clk_300_n = if (params.fft1DParams != None && params.fft2DParams != None && params.ddrParams != None) Some(IO(Input(Clock()))) else None
+    val clk_300_p = if (fft2DCond && ddrCond) Some(IO(Input(Clock()))) else None
+    val clk_300_n = if (fft2DCond && ddrCond) Some(IO(Input(Clock()))) else None
 
-    val c0_init_calib_complete = if (params.fft1DParams != None && params.fft2DParams != None && params.ddrParams != None) Some(IO(Output(Bool()))) else None
+    val c0_init_calib_complete = if (fft2DCond && ddrCond) Some(IO(Output(Bool()))) else None
 
-    if (params.fft1DParams != None && params.fft2DParams != None && params.ddrParams != None) {
+    if (fft2DCond && ddrCond) {
       val ddr4CtrlrWrapper = Module(new ddr4CtrlrWrapper)
 
       /////////////// RANGE ///////////////////////

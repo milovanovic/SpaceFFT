@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package spacefft.zcu102
+package spacefft.nexys
 
 import chisel3._
 import chisel3.experimental._
@@ -16,66 +16,43 @@ object booleanToVerilogStringParam extends (Boolean => StringParam) {
   def apply(b : Boolean) : StringParam = if(b) StringParam("""TRUE""") else StringParam("""FALSE""")
 }
 
-class ISERDESE3(val paramsISERDESE3: Map[String, Param] = Map(
-    "DATA_WIDTH"        -> fromIntToIntParam(8),
-    "FIFO_ENABLE"       -> fromStringToStringParam("TRUE"),
-    "FIFO_SYNC_MODE"    -> fromStringToStringParam("FALSE"),
-    "IS_CLK_B_INVERTED" -> fromIntToIntParam(1),
-    "IS_CLK_INVERTED"   -> fromIntToIntParam(0),
-    "IS_RST_INVERTED"   -> fromIntToIntParam(0),
-    "SIM_DEVICE"        -> fromStringToStringParam("ULTRASCALE_PLUS")
-  )) extends BlackBox(paramsISERDESE3){
-  val io = IO(new Bundle {
-    val FIFO_EMPTY      = Output(Bool())
-    val INTERNAL_DIVCLK = Output(Bool())
-    val Q               = Output(UInt(8.W))
-    val CLK             = Input(Clock())
-    val CLK_B           = Input(Clock())
-    val CLKDIV          = Input(Clock())
-    val D               = Input(Bool())
-    val FIFO_RD_CLK     = Input(Clock())
-    val FIFO_RD_EN      = Input(Bool())
-    val RST             = Input(Bool())
-  })
-}
-
-class IDELAYE3(val paramsIDELAYE3: Map[String, Param] = Map(
-    "CASCADE"          -> fromStringToStringParam("NONE"),
-    "DELAY_FORMAT"     -> fromStringToStringParam("TIME"),
-    "DELAY_SRC"        -> fromStringToStringParam("IDATAIN"),
-    "DELAY_TYPE"       -> fromStringToStringParam("FIXED"),
-    "DELAY_VALUE"      -> fromIntToIntParam(100),
-    "IS_CLK_INVERTED"  -> fromIntToIntParam(0),
-    "IS_RST_INVERTED"  -> fromIntToIntParam(0),
-    "REFCLK_FREQUENCY" -> fromIntToIntParam(300),
-    "UPDATE_MODE"      -> fromStringToStringParam("ASYNC"),
-    "SIM_DEVICE"       -> fromStringToStringParam("ULTRASCALE_PLUS")
-  )) extends BlackBox(paramsIDELAYE3){
-  val io = IO(new Bundle {
-    val CASC_OUT    = Output(Bool())
-    val CNTVALUEOUT = Output(UInt(9.W))
-    val DATAOUT     = Output(Bool())
-    val CASC_IN     = Input(Bool())
-    val CASC_RETURN = Input(Bool())
-    val CE          = Input(Bool())
-    val CLK         = Input(Clock())
-    val CNTVALUEIN  = Input(UInt(9.W))
-    val DATAIN      = Input(Bool())
-    val EN_VTC      = Input(Bool())
-    val IDATAIN     = Input(Bool())
-    val INC         = Input(Bool())
-    val LOAD        = Input(Bool())
-    val RST         = Input(Bool())
-  })
-}
-
-class IDELAYCTRL(val paramsIDELAYCTRL: Map[String, Param] = Map(
-    "SIM_DEVICE" -> fromStringToStringParam("ULTRASCALE")
-  )) extends BlackBox(paramsIDELAYCTRL){
+// SelectIO BlackBox for Vivado
+class SelectIO extends BlackBox {
     val io = IO(new Bundle {
-    val RDY    = Output(Bool())
-    val REFCLK = Input(Clock())
-    val RST    = Input(Bool())
+        val clk_in     = Input(Clock())
+        val clk_div_in = Input(Clock())
+        val io_reset   = Input(Bool())
+        val bitslip    = Input(UInt(1.W))
+        val data_in_from_pins_p = Input(UInt(1.W))
+        val data_in_from_pins_n = Input(UInt(1.W))
+        val data_in_to_device   = Output(UInt(8.W))
+    })
+}
+
+class IDELAYE2(val paramsIDELAYE2: Map[String, Param] = Map(
+    "IDELAY_TYPE"           -> fromStringToStringParam("FIXED"),
+    "DELAY_SRC"             -> fromStringToStringParam("IDATAIN"),
+    "HIGH_PERFORMANCE_MODE" -> fromStringToStringParam("TRUE"),
+    "SIGNAL_PATTERN"        -> fromStringToStringParam("DATA"),
+    "CINVCTRL_SEL"          -> fromStringToStringParam("FALSE"),
+    "PIPE_SEL"              -> fromStringToStringParam("FALSE"),
+    "IDELAY_VALUE"          -> fromIntToIntParam(24),
+    "REFCLK_FREQUENCY"      -> fromIntToIntParam(300)
+  )) extends BlackBox(paramsIDELAYE2){
+  val io = IO(new Bundle {
+    val CNTVALUEOUT = Output(UInt(5.W))
+    val DATAOUT     = Output(Bool())
+    val C           = Input(Clock())
+    val REGRST      = Input(Bool())
+    val LD          = Input(Bool())
+    val CE          = Input(Bool())
+    val INC         = Input(UInt(5.W))
+    val CINVCTRL    = Input(Bool())
+    val CNTVALUEIN  = Input(Bool())
+    val IDATAIN     = Input(Bool())
+    val DATAIN      = Input(Bool())
+    val LDPIPEEN    = Input(Bool())
+    val RST         = Input(Bool())
   })
 }
 
@@ -94,11 +71,11 @@ class PLL_LVDS extends BlackBox {
 // PLL BlackBox for Vivado
 class PLL_DSP extends BlackBox {
     val io = IO(new Bundle {
-        val clk_in1_p = Input(Clock())
-        val clk_in1_n = Input(Clock())
-        val clk_out1  = Output(Clock())
-        val locked    = Output(Bool())
-        val reset     = Input(Bool())
+        val clk_in1  = Input(Clock())
+        val clk_out1 = Output(Clock())
+        val clk_out2 = Output(Clock())
+        val locked   = Output(Bool())
+        val reset    = Input(Bool())
     })
 }
 

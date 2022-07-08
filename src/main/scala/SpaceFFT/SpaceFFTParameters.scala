@@ -108,7 +108,7 @@ case class DDRParamsAndAddresses (
 )
 
 /* SpaceFFTParams declaration, DDR4 */
-class SpaceFFTParams(rangeFFTSize: Int = 512, dopplerFFTSize: Int = 256) {
+class SpaceFFTParams(rangeFFTSize: Int = 512, dopplerFFTSize: Int = 256, ddrType: DDRType = DDR4) {
   val params : SpaceFFTParameters[FixedPoint] = SpaceFFTParameters (
     // Range parameters
     lvds1DParams = Some(LVDSPHYParamsAndAddresses(
@@ -211,7 +211,7 @@ class SpaceFFTParams(rangeFFTSize: Int = 512, dopplerFFTSize: Int = 256) {
       ctrl2DAddress = AddressSet(0x60000700, 0xFF)
     )),
     ddrParams = Some(DDRParamsAndAddresses(
-      ddrParams = DDR4
+      ddrParams = ddrType
     )),
     queueParams = Some(QueueParamsAndAddresses(
       queueParams = DspQueueCustomParams(

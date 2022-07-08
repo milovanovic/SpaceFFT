@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package spacefft.fpgawrapper
+package spacefft.zcu102
 
 import chisel3._
 import chisel3.stage.{ChiselGeneratorAnnotation, ChiselStage}
@@ -290,6 +290,9 @@ class ZCU102Shell(params: SpaceFFTParameters[FixedPoint], beatBytes: Int) extend
     c0_ddr4_ck_c    := spacefft.module.ddrIO.get.ddr4.get.c0_ddr4_ck_c
     c0_ddr4_ck_t    := spacefft.module.ddrIO.get.ddr4.get.c0_ddr4_ck_t
     c0_ddr4_adr     := spacefft.module.ddrIO.get.ddr4.get.c0_ddr4_adr
+
+    spacefft.module.reset_n.get   := !rst_lvds.io.peripheral_reset // just temporary solution for reset signal it should be active in 1, that needs to be changed
+    spacefft.module.mem_reset.get := rst_lvds.io.peripheral_reset
 
     // // ethernet signals
     // ethIO.o_data_eth := spacefft.module.ethIO.o_data_eth

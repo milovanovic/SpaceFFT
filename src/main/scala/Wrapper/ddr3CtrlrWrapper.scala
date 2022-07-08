@@ -6,8 +6,8 @@ import chisel3.experimental._
 class ddr3IO extends Bundle {
   //////// signals to ddr3 memory ////////////////////////////
   val o_MemClk_p = Output(Bool())
-  val sys_clk = Input(Bool())
-  val clk_ref = Input(Bool())
+  val sys_clk = Input(Clock())
+  val clk_ref = Input(Clock())
   val ddr3_dq  = Analog((16.W))  // this one should be replaced with inout
   val ddr3_addr = Output(UInt(15.W))
   //output wire [14:0] ddr3_addr,
@@ -338,8 +338,8 @@ class ddr3CtrlrWrapper extends BlackBox {
       val i_ready_eth = Input(Bool())
 
       val o_MemClk_p = Output(Bool())
-      val sys_clk = Input(Bool())
-      val clk_ref = Input(Bool())
+      val sys_clk = Input(Clock())
+      val clk_ref = Input(Clock())
       val ddr3_dq  = Analog((16.W))  // this one should be replaced with inout
       val ddr3_addr = Output(UInt(15.W))
       //output wire [14:0] ddr3_addr,

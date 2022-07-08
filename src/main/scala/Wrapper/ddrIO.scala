@@ -1,7 +1,6 @@
 package spacefft.ddrwrapper
 
 import chisel3._
-import chisel3.experimental._
 
 class DDRIO (val ddr4cond: Boolean, val ddr3cond: Boolean) extends Bundle {
     // DDR4

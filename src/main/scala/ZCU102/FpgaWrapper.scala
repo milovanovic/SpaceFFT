@@ -7,7 +7,6 @@ import chisel3.stage.{ChiselGeneratorAnnotation, ChiselStage}
 import chisel3.experimental.{Analog, IO, FixedPoint, fromStringToStringParam, fromIntToIntParam}
 
 import dsptools.numbers._
-import dspblocks._
 
 import freechips.rocketchip.amba.axi4._
 import freechips.rocketchip.amba.axi4stream._
@@ -269,34 +268,34 @@ class ZCU102Shell(params: SpaceFFTParameters[FixedPoint], beatBytes: Int) extend
     val c0_ddr4_ck_t     = IO(Output(Bool()))
 
     // DDR4 signals
-    spacefft.module.ddr4IO.get.sys_clk := 0.U // FIXME: Currently not in use
-    spacefft.module.clk_300_p.get := clock
-    spacefft.module.clk_300_n.get := io.clock_n
+    spacefft.module.ddrIO.get.ddr4.get.sys_clk := 0.U // FIXME: Currently not in use
+    spacefft.module.ddrIO.get.clk_300_p.get := clock
+    spacefft.module.ddrIO.get.clk_300_n.get := io.clock_n
 
     // inout connections
-    spacefft.module.ddr4IO.get.c0_ddr4_dq       <> c0_ddr4_dq
-    spacefft.module.ddr4IO.get.c0_ddr4_dm_dbi_n <> c0_ddr4_dm_dbi_n
-    spacefft.module.ddr4IO.get.c0_ddr4_dqs_c    <> c0_ddr4_dqs_c
-    spacefft.module.ddr4IO.get.c0_ddr4_dqs_t    <> c0_ddr4_dqs_t
+    spacefft.module.ddrIO.get.ddr4.get.c0_ddr4_dq       <> c0_ddr4_dq
+    spacefft.module.ddrIO.get.ddr4.get.c0_ddr4_dm_dbi_n <> c0_ddr4_dm_dbi_n
+    spacefft.module.ddrIO.get.ddr4.get.c0_ddr4_dqs_c    <> c0_ddr4_dqs_c
+    spacefft.module.ddrIO.get.ddr4.get.c0_ddr4_dqs_t    <> c0_ddr4_dqs_t
 
     // output connections
-    o_MemClk_p      := spacefft.module.ddr4IO.get.o_MemClk_p
-    c0_ddr4_ba      := spacefft.module.ddr4IO.get.c0_ddr4_ba
-    c0_ddr4_reset_n := spacefft.module.ddr4IO.get.c0_ddr4_reset_n
-    c0_ddr4_cs_n    := spacefft.module.ddr4IO.get.c0_ddr4_cs_n
-    c0_ddr4_odt     := spacefft.module.ddr4IO.get.c0_ddr4_odt
-    c0_ddr4_bg      := spacefft.module.ddr4IO.get.c0_ddr4_bg
-    c0_ddr4_act_n   := spacefft.module.ddr4IO.get.c0_ddr4_act_n
-    c0_ddr4_cke     := spacefft.module.ddr4IO.get.c0_ddr4_cke
-    c0_ddr4_ck_c    := spacefft.module.ddr4IO.get.c0_ddr4_ck_c
-    c0_ddr4_ck_t    := spacefft.module.ddr4IO.get.c0_ddr4_ck_t
-    c0_ddr4_adr     := spacefft.module.ddr4IO.get.c0_ddr4_adr
+    o_MemClk_p      := spacefft.module.ddrIO.get.ddr4.get.o_MemClk_p
+    c0_ddr4_ba      := spacefft.module.ddrIO.get.ddr4.get.c0_ddr4_ba
+    c0_ddr4_reset_n := spacefft.module.ddrIO.get.ddr4.get.c0_ddr4_reset_n
+    c0_ddr4_cs_n    := spacefft.module.ddrIO.get.ddr4.get.c0_ddr4_cs_n
+    c0_ddr4_odt     := spacefft.module.ddrIO.get.ddr4.get.c0_ddr4_odt
+    c0_ddr4_bg      := spacefft.module.ddrIO.get.ddr4.get.c0_ddr4_bg
+    c0_ddr4_act_n   := spacefft.module.ddrIO.get.ddr4.get.c0_ddr4_act_n
+    c0_ddr4_cke     := spacefft.module.ddrIO.get.ddr4.get.c0_ddr4_cke
+    c0_ddr4_ck_c    := spacefft.module.ddrIO.get.ddr4.get.c0_ddr4_ck_c
+    c0_ddr4_ck_t    := spacefft.module.ddrIO.get.ddr4.get.c0_ddr4_ck_t
+    c0_ddr4_adr     := spacefft.module.ddrIO.get.ddr4.get.c0_ddr4_adr
 
     // // ethernet signals
     // ethIO.o_data_eth := spacefft.module.ethIO.o_data_eth
     // ethIO.o_start_eth := spacefft.module.ethIO.o_start_eth
     // ethIO.o_we_eth := spacefft.module.ethIO.o_we_eth
-    spacefft.module.ethIO.get.i_ready_eth := 0.U //ethIO.i_ready_eth
+    spacefft.module.ddrIO.get.eth4.get.i_ready_eth := 0.U //ethIO.i_ready_eth
 
     // spacefft clock & reset
     spacefft.module.clock := pll_dsp.io.clk_out1

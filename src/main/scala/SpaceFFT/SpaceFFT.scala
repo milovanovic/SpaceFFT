@@ -4,7 +4,6 @@ package spacefft
 
 import chisel3._
 import chisel3.stage.{ChiselGeneratorAnnotation, ChiselStage}
-import chisel3.util._
 import chisel3.experimental.{IO, FixedPoint}
 
 import dsptools.numbers._
@@ -38,7 +37,7 @@ class AXI4SpaceFFT[T <: Data : Real: BinaryRepresentation](params: SpaceFFTParam
   }
 }
 
-class SpaceFFTIO(phy: Boolean, crc: Boolean) extends Bundle {
+class SpaceFFTIO(val phy: Boolean, val crc: Boolean) extends Bundle {
   val i_data   = if (phy) Some(Input(UInt(8.W))) else None
   val i_valid  = if (phy) Some(Input(UInt(8.W))) else None
   val i_frame  = if (phy) Some(Input(UInt(8.W))) else None
@@ -49,8 +48,6 @@ class SpaceFFTIO(phy: Boolean, crc: Boolean) extends Bundle {
 
   val word_size = if (crc == true && phy == false) Some(Input(UInt(2.W))) else None
   val crc_en    = if (crc == true && phy == false) Some(Input(UInt(1.W))) else None
-
-  override def cloneType: this.type = SpaceFFTIO(phy, crc).asInstanceOf[this.type]
 }
 object SpaceFFTIO {
   def apply(phy: Boolean, crc: Boolean): SpaceFFTIO = new SpaceFFTIO(phy, crc)
@@ -92,11 +89,10 @@ trait AXI4SpaceFFTPins extends AXI4SpaceFFT[FixedPoint] {
 }
 
 abstract class SpaceFFT [T <: Data : Real: BinaryRepresentation, D, U, E, O, B <: Data] (params: SpaceFFTParameters[T], beatBytes: Int) extends LazyModule()(Parameters.empty) with DspBlock[D, U, E, O, B] {
-
-  /* DDR condition */
-  val ddrCond = params.ddrParams != None
   /* 2D fft condition */
   val fft2DCond = params.fft1DParams != None && params.fft2DParams != None
+  /* DDR condition */
+  val ddrCond = fft2DCond && (params.ddrParams != None)
 
   /* Range */
   val lvdsphy = if (params.lvds1DParams != None) Some(LazyModule(new AXI4StreamDataRX(params.lvds1DParams.get.lvdsphyParams){
@@ -196,202 +192,380 @@ abstract class SpaceFFT [T <: Data : Real: BinaryRepresentation, D, U, E, O, B <
     }
 
     /* If doppler FFT exists, generate wrapper */
-    val mem_reset = if (fft2DCond && ddrCond) Some(IO(Input(Bool()))) else None
-    val reset_n   = if (fft2DCond && ddrCond) Some(IO(Input(Bool()))) else None
+    val mem_reset = if (ddrCond) Some(IO(Input(Bool()))) else None
+    val reset_n   = if (ddrCond) Some(IO(Input(Bool()))) else None
 
-    val ddr4IO    = if (fft2DCond && ddrCond) Some(IO(new ddr4IO())) else None
-    val ethIO     = if (fft2DCond && ddrCond) Some(IO(new ethIO_ddr4())) else None
+    /* IOs */
+    val ddrIO = if (ddrCond) Some(IO(new DDRIO(params.ddrParams.get.ddrParams == DDR4, params.ddrParams.get.ddrParams == DDR3))) else None
 
-    val clk_300_p = if (fft2DCond && ddrCond) Some(IO(Input(Clock()))) else None
-    val clk_300_n = if (fft2DCond && ddrCond) Some(IO(Input(Clock()))) else None
+    /* DDR wrappers */
+    if (ddrCond) {
+      /* DDR4 */
+      if (params.ddrParams.get.ddrParams == DDR4) {
+        val ddr4CtrlrWrapper = Module(new ddr4CtrlrWrapper)
 
-    val c0_init_calib_complete = if (fft2DCond && ddrCond) Some(IO(Output(Bool()))) else None
+        /////////////// RANGE ///////////////////////
 
-    if (fft2DCond && ddrCond) {
-      val ddr4CtrlrWrapper = Module(new ddr4CtrlrWrapper)
+        ddr4CtrlrWrapper.io.s_axis_tdata_r_0  := split.get.out.get.bits.data
+        ddr4CtrlrWrapper.io.s_axis_tvalid_r_0 := split.get.out.get.valid
+        ddr4CtrlrWrapper.io.s_axis_tlast_r_0  := split.get.out.get.bits.last
+        split.get.out.get.ready := true.B
 
-      /////////////// RANGE ///////////////////////
+        ddr4CtrlrWrapper.io.s_axis_tdata_r_1  := 0.U
+        ddr4CtrlrWrapper.io.s_axis_tvalid_r_1 := false.B
+        ddr4CtrlrWrapper.io.s_axis_tlast_r_1  := false.B
 
-      ddr4CtrlrWrapper.io.s_axis_tdata_r_0  := split.get.out.get.bits.data
-      ddr4CtrlrWrapper.io.s_axis_tvalid_r_0 := split.get.out.get.valid
-      ddr4CtrlrWrapper.io.s_axis_tlast_r_0  := split.get.out.get.bits.last
-      split.get.out.get.ready := true.B
+        ddr4CtrlrWrapper.io.s_axis_tdata_r_2  := 0.U
+        ddr4CtrlrWrapper.io.s_axis_tvalid_r_2 := false.B
+        ddr4CtrlrWrapper.io.s_axis_tlast_r_2  := false.B
 
-      ddr4CtrlrWrapper.io.s_axis_tdata_r_1  := 0.U
-      ddr4CtrlrWrapper.io.s_axis_tvalid_r_1 := false.B
-      ddr4CtrlrWrapper.io.s_axis_tlast_r_1  := false.B
+        ddr4CtrlrWrapper.io.s_axis_tdata_r_3  := 0.U
+        ddr4CtrlrWrapper.io.s_axis_tvalid_r_3 := false.B
+        ddr4CtrlrWrapper.io.s_axis_tlast_r_3  := false.B
 
-      ddr4CtrlrWrapper.io.s_axis_tdata_r_2  := 0.U
-      ddr4CtrlrWrapper.io.s_axis_tvalid_r_2 := false.B
-      ddr4CtrlrWrapper.io.s_axis_tlast_r_2  := false.B
+        ddr4CtrlrWrapper.io.s_axis_tdata_r_4  := 0.U
+        ddr4CtrlrWrapper.io.s_axis_tvalid_r_4 := false.B
+        ddr4CtrlrWrapper.io.s_axis_tlast_r_4  := false.B
 
-      ddr4CtrlrWrapper.io.s_axis_tdata_r_3  := 0.U
-      ddr4CtrlrWrapper.io.s_axis_tvalid_r_3 := false.B
-      ddr4CtrlrWrapper.io.s_axis_tlast_r_3  := false.B
+        ddr4CtrlrWrapper.io.s_axis_tdata_r_5  := 0.U
+        ddr4CtrlrWrapper.io.s_axis_tvalid_r_5 := false.B
+        ddr4CtrlrWrapper.io.s_axis_tlast_r_5  := false.B
 
-      ddr4CtrlrWrapper.io.s_axis_tdata_r_4  := 0.U
-      ddr4CtrlrWrapper.io.s_axis_tvalid_r_4 := false.B
-      ddr4CtrlrWrapper.io.s_axis_tlast_r_4  := false.B
+        ddr4CtrlrWrapper.io.s_axis_tdata_r_6  := 0.U
+        ddr4CtrlrWrapper.io.s_axis_tvalid_r_6 := false.B
+        ddr4CtrlrWrapper.io.s_axis_tlast_r_6  := false.B
 
-      ddr4CtrlrWrapper.io.s_axis_tdata_r_5  := 0.U
-      ddr4CtrlrWrapper.io.s_axis_tvalid_r_5 := false.B
-      ddr4CtrlrWrapper.io.s_axis_tlast_r_5  := false.B
+        ddr4CtrlrWrapper.io.s_axis_tdata_r_7  := 0.U
+        ddr4CtrlrWrapper.io.s_axis_tvalid_r_7 := false.B
+        ddr4CtrlrWrapper.io.s_axis_tlast_r_7  := false.B
 
-      ddr4CtrlrWrapper.io.s_axis_tdata_r_6  := 0.U
-      ddr4CtrlrWrapper.io.s_axis_tvalid_r_6 := false.B
-      ddr4CtrlrWrapper.io.s_axis_tlast_r_6  := false.B
+        ddr4CtrlrWrapper.io.s_axis_tdata_r_8  := 0.U
+        ddr4CtrlrWrapper.io.s_axis_tvalid_r_8 := false.B
+        ddr4CtrlrWrapper.io.s_axis_tlast_r_8  := false.B
 
-      ddr4CtrlrWrapper.io.s_axis_tdata_r_7  := 0.U
-      ddr4CtrlrWrapper.io.s_axis_tvalid_r_7 := false.B
-      ddr4CtrlrWrapper.io.s_axis_tlast_r_7  := false.B
+        ddr4CtrlrWrapper.io.s_axis_tdata_r_9  := 0.U
+        ddr4CtrlrWrapper.io.s_axis_tvalid_r_9 := false.B
+        ddr4CtrlrWrapper.io.s_axis_tlast_r_9  := false.B
 
-      ddr4CtrlrWrapper.io.s_axis_tdata_r_8  := 0.U
-      ddr4CtrlrWrapper.io.s_axis_tvalid_r_8 := false.B
-      ddr4CtrlrWrapper.io.s_axis_tlast_r_8  := false.B
+        ddr4CtrlrWrapper.io.s_axis_tdata_r_10  := 0.U
+        ddr4CtrlrWrapper.io.s_axis_tvalid_r_10 := false.B
+        ddr4CtrlrWrapper.io.s_axis_tlast_r_10  := false.B
 
-      ddr4CtrlrWrapper.io.s_axis_tdata_r_9  := 0.U
-      ddr4CtrlrWrapper.io.s_axis_tvalid_r_9 := false.B
-      ddr4CtrlrWrapper.io.s_axis_tlast_r_9  := false.B
+        ddr4CtrlrWrapper.io.s_axis_tdata_r_11  := 0.U
+        ddr4CtrlrWrapper.io.s_axis_tvalid_r_11 := false.B
+        ddr4CtrlrWrapper.io.s_axis_tlast_r_11  := false.B
 
-      ddr4CtrlrWrapper.io.s_axis_tdata_r_10  := 0.U
-      ddr4CtrlrWrapper.io.s_axis_tvalid_r_10 := false.B
-      ddr4CtrlrWrapper.io.s_axis_tlast_r_10  := false.B
+        ddr4CtrlrWrapper.io.s_axis_tdata_r_12  := 0.U
+        ddr4CtrlrWrapper.io.s_axis_tvalid_r_12 := false.B
+        ddr4CtrlrWrapper.io.s_axis_tlast_r_12  := false.B
 
-      ddr4CtrlrWrapper.io.s_axis_tdata_r_11  := 0.U
-      ddr4CtrlrWrapper.io.s_axis_tvalid_r_11 := false.B
-      ddr4CtrlrWrapper.io.s_axis_tlast_r_11  := false.B
+        ddr4CtrlrWrapper.io.s_axis_tdata_r_13  := 0.U
+        ddr4CtrlrWrapper.io.s_axis_tvalid_r_13 := false.B
+        ddr4CtrlrWrapper.io.s_axis_tlast_r_13  := false.B
 
-      ddr4CtrlrWrapper.io.s_axis_tdata_r_12  := 0.U
-      ddr4CtrlrWrapper.io.s_axis_tvalid_r_12 := false.B
-      ddr4CtrlrWrapper.io.s_axis_tlast_r_12  := false.B
+        ddr4CtrlrWrapper.io.s_axis_tdata_r_14  := 0.U
+        ddr4CtrlrWrapper.io.s_axis_tvalid_r_14 := false.B
+        ddr4CtrlrWrapper.io.s_axis_tlast_r_14  := false.B
 
-      ddr4CtrlrWrapper.io.s_axis_tdata_r_13  := 0.U
-      ddr4CtrlrWrapper.io.s_axis_tvalid_r_13 := false.B
-      ddr4CtrlrWrapper.io.s_axis_tlast_r_13  := false.B
+        ddr4CtrlrWrapper.io.s_axis_tdata_r_15  := 0.U
+        ddr4CtrlrWrapper.io.s_axis_tvalid_r_15 := false.B
+        ddr4CtrlrWrapper.io.s_axis_tlast_r_15  := false.B
 
-      ddr4CtrlrWrapper.io.s_axis_tdata_r_14  := 0.U
-      ddr4CtrlrWrapper.io.s_axis_tvalid_r_14 := false.B
-      ddr4CtrlrWrapper.io.s_axis_tlast_r_14  := false.B
+        ///////////////// DOPPLER /////////////////////
 
-      ddr4CtrlrWrapper.io.s_axis_tdata_r_15  := 0.U
-      ddr4CtrlrWrapper.io.s_axis_tvalid_r_15 := false.B
-      ddr4CtrlrWrapper.io.s_axis_tlast_r_15  := false.B
-
-      ///////////////// DOPPLER /////////////////////
-
-      ddr4CtrlrWrapper.io.s_axis_tdata_d_0  := 0.U //dopplerFFTWrapper.module.io.data_out
-      // false if we do not want to to use virtual fifo
-      ddr4CtrlrWrapper.io.s_axis_tvalid_d_0 := false.B //dopplerFFTWrapper.module.io.valid_out //false.B //dopplerFFTWrapper.module.io.valid_out//false.B //dopplerFFTWrapper.module.io.valid_out // disable virtual fifo writing
-      ddr4CtrlrWrapper.io.s_axis_tlast_d_0  := false.B //dopplerFFTWrapper.module.io.last_out
+        ddr4CtrlrWrapper.io.s_axis_tdata_d_0  := 0.U //dopplerFFTWrapper.module.io.data_out
+        // false if we do not want to to use virtual fifo
+        ddr4CtrlrWrapper.io.s_axis_tvalid_d_0 := false.B //dopplerFFTWrapper.module.io.valid_out //false.B //dopplerFFTWrapper.module.io.valid_out//false.B //dopplerFFTWrapper.module.io.valid_out // disable virtual fifo writing
+        ddr4CtrlrWrapper.io.s_axis_tlast_d_0  := false.B //dopplerFFTWrapper.module.io.last_out
 
 
-      ddr4CtrlrWrapper.io.s_axis_tdata_d_1  := 0.U
-      ddr4CtrlrWrapper.io.s_axis_tvalid_d_1 := false.B
-      ddr4CtrlrWrapper.io.s_axis_tlast_d_1  := false.B
+        ddr4CtrlrWrapper.io.s_axis_tdata_d_1  := 0.U
+        ddr4CtrlrWrapper.io.s_axis_tvalid_d_1 := false.B
+        ddr4CtrlrWrapper.io.s_axis_tlast_d_1  := false.B
 
-      ddr4CtrlrWrapper.io.s_axis_tdata_d_2  := 0.U
-      ddr4CtrlrWrapper.io.s_axis_tvalid_d_2 := false.B
-      ddr4CtrlrWrapper.io.s_axis_tlast_d_2  := false.B
+        ddr4CtrlrWrapper.io.s_axis_tdata_d_2  := 0.U
+        ddr4CtrlrWrapper.io.s_axis_tvalid_d_2 := false.B
+        ddr4CtrlrWrapper.io.s_axis_tlast_d_2  := false.B
 
-      ddr4CtrlrWrapper.io.s_axis_tdata_d_3  := 0.U
-      ddr4CtrlrWrapper.io.s_axis_tvalid_d_3 := false.B
-      ddr4CtrlrWrapper.io.s_axis_tlast_d_3  := false.B
+        ddr4CtrlrWrapper.io.s_axis_tdata_d_3  := 0.U
+        ddr4CtrlrWrapper.io.s_axis_tvalid_d_3 := false.B
+        ddr4CtrlrWrapper.io.s_axis_tlast_d_3  := false.B
 
-      ddr4CtrlrWrapper.io.s_axis_tdata_d_4  := 0.U
-      ddr4CtrlrWrapper.io.s_axis_tvalid_d_4 := false.B
-      ddr4CtrlrWrapper.io.s_axis_tlast_d_4  := false.B
+        ddr4CtrlrWrapper.io.s_axis_tdata_d_4  := 0.U
+        ddr4CtrlrWrapper.io.s_axis_tvalid_d_4 := false.B
+        ddr4CtrlrWrapper.io.s_axis_tlast_d_4  := false.B
 
-      ddr4CtrlrWrapper.io.s_axis_tdata_d_5  := 0.U
-      ddr4CtrlrWrapper.io.s_axis_tvalid_d_5 := false.B
-      ddr4CtrlrWrapper.io.s_axis_tlast_d_5  := false.B
+        ddr4CtrlrWrapper.io.s_axis_tdata_d_5  := 0.U
+        ddr4CtrlrWrapper.io.s_axis_tvalid_d_5 := false.B
+        ddr4CtrlrWrapper.io.s_axis_tlast_d_5  := false.B
 
-      ddr4CtrlrWrapper.io.s_axis_tdata_d_6  := 0.U
-      ddr4CtrlrWrapper.io.s_axis_tvalid_d_6 := false.B
-      ddr4CtrlrWrapper.io.s_axis_tlast_d_6  := false.B
+        ddr4CtrlrWrapper.io.s_axis_tdata_d_6  := 0.U
+        ddr4CtrlrWrapper.io.s_axis_tvalid_d_6 := false.B
+        ddr4CtrlrWrapper.io.s_axis_tlast_d_6  := false.B
 
-      ddr4CtrlrWrapper.io.s_axis_tdata_d_7  := 0.U
-      ddr4CtrlrWrapper.io.s_axis_tvalid_d_7 := false.B
-      ddr4CtrlrWrapper.io.s_axis_tlast_d_7  := false.B
+        ddr4CtrlrWrapper.io.s_axis_tdata_d_7  := 0.U
+        ddr4CtrlrWrapper.io.s_axis_tvalid_d_7 := false.B
+        ddr4CtrlrWrapper.io.s_axis_tlast_d_7  := false.B
 
-      ddr4CtrlrWrapper.io.s_axis_tdata_d_8  := 0.U
-      ddr4CtrlrWrapper.io.s_axis_tvalid_d_8 := false.B
-      ddr4CtrlrWrapper.io.s_axis_tlast_d_8  := false.B
+        ddr4CtrlrWrapper.io.s_axis_tdata_d_8  := 0.U
+        ddr4CtrlrWrapper.io.s_axis_tvalid_d_8 := false.B
+        ddr4CtrlrWrapper.io.s_axis_tlast_d_8  := false.B
 
-      ddr4CtrlrWrapper.io.s_axis_tdata_d_9  := 0.U
-      ddr4CtrlrWrapper.io.s_axis_tvalid_d_9 := false.B
-      ddr4CtrlrWrapper.io.s_axis_tlast_d_9  := false.B
+        ddr4CtrlrWrapper.io.s_axis_tdata_d_9  := 0.U
+        ddr4CtrlrWrapper.io.s_axis_tvalid_d_9 := false.B
+        ddr4CtrlrWrapper.io.s_axis_tlast_d_9  := false.B
 
-      ddr4CtrlrWrapper.io.s_axis_tdata_d_10  := 0.U
-      ddr4CtrlrWrapper.io.s_axis_tvalid_d_10 := false.B
-      ddr4CtrlrWrapper.io.s_axis_tlast_d_10  := false.B
+        ddr4CtrlrWrapper.io.s_axis_tdata_d_10  := 0.U
+        ddr4CtrlrWrapper.io.s_axis_tvalid_d_10 := false.B
+        ddr4CtrlrWrapper.io.s_axis_tlast_d_10  := false.B
 
-      ddr4CtrlrWrapper.io.s_axis_tdata_d_11  := 0.U
-      ddr4CtrlrWrapper.io.s_axis_tvalid_d_11 := false.B
-      ddr4CtrlrWrapper.io.s_axis_tlast_d_11  := false.B
+        ddr4CtrlrWrapper.io.s_axis_tdata_d_11  := 0.U
+        ddr4CtrlrWrapper.io.s_axis_tvalid_d_11 := false.B
+        ddr4CtrlrWrapper.io.s_axis_tlast_d_11  := false.B
 
-      ddr4CtrlrWrapper.io.s_axis_tdata_d_12  := 0.U
-      ddr4CtrlrWrapper.io.s_axis_tvalid_d_12 := false.B
-      ddr4CtrlrWrapper.io.s_axis_tlast_d_12  := false.B
+        ddr4CtrlrWrapper.io.s_axis_tdata_d_12  := 0.U
+        ddr4CtrlrWrapper.io.s_axis_tvalid_d_12 := false.B
+        ddr4CtrlrWrapper.io.s_axis_tlast_d_12  := false.B
 
-      ddr4CtrlrWrapper.io.s_axis_tdata_d_13  := 0.U
-      ddr4CtrlrWrapper.io.s_axis_tvalid_d_13 := false.B
-      ddr4CtrlrWrapper.io.s_axis_tlast_d_13  := false.B
+        ddr4CtrlrWrapper.io.s_axis_tdata_d_13  := 0.U
+        ddr4CtrlrWrapper.io.s_axis_tvalid_d_13 := false.B
+        ddr4CtrlrWrapper.io.s_axis_tlast_d_13  := false.B
 
-      ddr4CtrlrWrapper.io.s_axis_tdata_d_14  := 0.U
-      ddr4CtrlrWrapper.io.s_axis_tvalid_d_14 := false.B
-      ddr4CtrlrWrapper.io.s_axis_tlast_d_14  := false.B
+        ddr4CtrlrWrapper.io.s_axis_tdata_d_14  := 0.U
+        ddr4CtrlrWrapper.io.s_axis_tvalid_d_14 := false.B
+        ddr4CtrlrWrapper.io.s_axis_tlast_d_14  := false.B
 
-      ddr4CtrlrWrapper.io.s_axis_tdata_d_15  := 0.U
-      ddr4CtrlrWrapper.io.s_axis_tvalid_d_15 := false.B
-      ddr4CtrlrWrapper.io.s_axis_tlast_d_15  := false.B
+        ddr4CtrlrWrapper.io.s_axis_tdata_d_15  := 0.U
+        ddr4CtrlrWrapper.io.s_axis_tvalid_d_15 := false.B
+        ddr4CtrlrWrapper.io.s_axis_tlast_d_15  := false.B
 
-      ///////////////////////////////////////////////////
-      ////////////////////// Doppler OUT /////////////////////////////////////////////
-      // drive receiver one to doppler fft!
+        ///////////////////////////////////////////////////
+        ////////////////////// Doppler OUT /////////////////////////////////////////////
+        // drive receiver one to doppler fft!
 
-      queue.get.in.get.bits.data  := ddr4CtrlrWrapper.io.m_axis_tdata_d_0
-      queue.get.in.get.valid := ddr4CtrlrWrapper.io.m_axis_tvalid_d_0
-      queue.get.in.get.bits.last  := ddr4CtrlrWrapper.io.m_axis_tlast_d_0
-      ddr4CtrlrWrapper.io.m_axis_tready_d_0 := queue.get.in.get.ready
+        queue.get.in.get.bits.data  := ddr4CtrlrWrapper.io.m_axis_tdata_d_0
+        queue.get.in.get.valid := ddr4CtrlrWrapper.io.m_axis_tvalid_d_0
+        queue.get.in.get.bits.last  := ddr4CtrlrWrapper.io.m_axis_tlast_d_0
+        ddr4CtrlrWrapper.io.m_axis_tready_d_0 := queue.get.in.get.ready
 
-      ddr4CtrlrWrapper.io.s_axis_aclk := clock
-      ddr4CtrlrWrapper.io.m_axis_aclk := clock
-      ddr4CtrlrWrapper.io.s_axis_aresetn := reset_n.get
-      ddr4CtrlrWrapper.io.mem_reset := mem_reset.get
+        ddr4CtrlrWrapper.io.s_axis_aclk := clock
+        ddr4CtrlrWrapper.io.m_axis_aclk := clock
+        ddr4CtrlrWrapper.io.s_axis_aresetn := reset_n.get
+        ddr4CtrlrWrapper.io.mem_reset := mem_reset.get
 
-      // ethernet signals
-      ethIO.get.o_data_eth := ddr4CtrlrWrapper.io.o_data_eth
-      ethIO.get.o_start_eth := ddr4CtrlrWrapper.io.o_start_eth
-      ethIO.get.o_we_eth := ddr4CtrlrWrapper.io.o_we_eth
-      ddr4CtrlrWrapper.io.i_ready_eth := ethIO.get.i_ready_eth
+        // ethernet signals
+        ddrIO.get.eth4.get.o_data_eth := ddr4CtrlrWrapper.io.o_data_eth
+        ddrIO.get.eth4.get.o_start_eth := ddr4CtrlrWrapper.io.o_start_eth
+        ddrIO.get.eth4.get.o_we_eth := ddr4CtrlrWrapper.io.o_we_eth
+        ddr4CtrlrWrapper.io.i_ready_eth := ddrIO.get.eth4.get.i_ready_eth
 
-      //////////////////////////////////////////// ddr4 memory specific signals///////////////////////
+        //////////////////////////////////////////// ddr4 memory specific signals///////////////////////
 
-      // input connections
-      ddr4CtrlrWrapper.io.sys_clk := ddr4IO.get.sys_clk
-      ddr4CtrlrWrapper.io.clk_300_p := clk_300_p.get
-      ddr4CtrlrWrapper.io.clk_300_n := clk_300_n.get
+        // input connections
+        ddr4CtrlrWrapper.io.sys_clk := ddrIO.get.ddr4.get.sys_clk
+        ddr4CtrlrWrapper.io.clk_300_p := ddrIO.get.clk_300_p.get
+        ddr4CtrlrWrapper.io.clk_300_n := ddrIO.get.clk_300_n.get
 
-      // inout connections
-      ddr4CtrlrWrapper.io.c0_ddr4_dq <> ddr4IO.get.c0_ddr4_dq
-      ddr4CtrlrWrapper.io.c0_ddr4_dm_dbi_n <> ddr4IO.get.c0_ddr4_dm_dbi_n
-      ddr4CtrlrWrapper.io.c0_ddr4_dqs_c <> ddr4IO.get.c0_ddr4_dqs_c
-      ddr4CtrlrWrapper.io.c0_ddr4_dqs_t <> ddr4IO.get.c0_ddr4_dqs_t
+        // inout connections
+        ddr4CtrlrWrapper.io.c0_ddr4_dq <> ddrIO.get.ddr4.get.c0_ddr4_dq
+        ddr4CtrlrWrapper.io.c0_ddr4_dm_dbi_n <> ddrIO.get.ddr4.get.c0_ddr4_dm_dbi_n
+        ddr4CtrlrWrapper.io.c0_ddr4_dqs_c <> ddrIO.get.ddr4.get.c0_ddr4_dqs_c
+        ddr4CtrlrWrapper.io.c0_ddr4_dqs_t <> ddrIO.get.ddr4.get.c0_ddr4_dqs_t
 
-      // output connections
-      ddr4IO.get.o_MemClk_p  := ddr4CtrlrWrapper.io.o_MemClk_p
-      ddr4IO.get.c0_ddr4_ba := ddr4CtrlrWrapper.io.c0_ddr4_ba
-      ddr4IO.get.c0_ddr4_reset_n := ddr4CtrlrWrapper.io.c0_ddr4_reset_n
-      ddr4IO.get.c0_ddr4_cs_n := ddr4CtrlrWrapper.io.c0_ddr4_cs_n
-      ddr4IO.get.c0_ddr4_odt := ddr4CtrlrWrapper.io.c0_ddr4_odt
-      ddr4IO.get.c0_ddr4_bg := ddr4CtrlrWrapper.io.c0_ddr4_bg
-      ddr4IO.get.c0_ddr4_act_n := ddr4CtrlrWrapper.io.c0_ddr4_act_n
-      ddr4IO.get.c0_ddr4_cke := ddr4CtrlrWrapper.io.c0_ddr4_cke
-      ddr4IO.get.c0_ddr4_ck_c := ddr4CtrlrWrapper.io.c0_ddr4_ck_c
-      ddr4IO.get.c0_ddr4_ck_t := ddr4CtrlrWrapper.io.c0_ddr4_ck_t
-      ddr4IO.get.c0_ddr4_adr := ddr4CtrlrWrapper.io.c0_ddr4_adr
+        // output connections
+        ddrIO.get.ddr4.get.o_MemClk_p  := ddr4CtrlrWrapper.io.o_MemClk_p
+        ddrIO.get.ddr4.get.c0_ddr4_ba := ddr4CtrlrWrapper.io.c0_ddr4_ba
+        ddrIO.get.ddr4.get.c0_ddr4_reset_n := ddr4CtrlrWrapper.io.c0_ddr4_reset_n
+        ddrIO.get.ddr4.get.c0_ddr4_cs_n := ddr4CtrlrWrapper.io.c0_ddr4_cs_n
+        ddrIO.get.ddr4.get.c0_ddr4_odt := ddr4CtrlrWrapper.io.c0_ddr4_odt
+        ddrIO.get.ddr4.get.c0_ddr4_bg := ddr4CtrlrWrapper.io.c0_ddr4_bg
+        ddrIO.get.ddr4.get.c0_ddr4_act_n := ddr4CtrlrWrapper.io.c0_ddr4_act_n
+        ddrIO.get.ddr4.get.c0_ddr4_cke := ddr4CtrlrWrapper.io.c0_ddr4_cke
+        ddrIO.get.ddr4.get.c0_ddr4_ck_c := ddr4CtrlrWrapper.io.c0_ddr4_ck_c
+        ddrIO.get.ddr4.get.c0_ddr4_ck_t := ddr4CtrlrWrapper.io.c0_ddr4_ck_t
+        ddrIO.get.ddr4.get.c0_ddr4_adr := ddr4CtrlrWrapper.io.c0_ddr4_adr
 
-      c0_init_calib_complete.get := ddr4CtrlrWrapper.io.c0_init_calib_complete
+        ddrIO.get.c0_init_calib_complete.get := ddr4CtrlrWrapper.io.c0_init_calib_complete
+      }
+      /* DDR3 */
+      else {
+        val ddr3CtrlrWrapper = Module(new ddr3CtrlrWrapper) // .io.signals
+
+        /////////////// RANGE ///////////////////////
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_r_0  := split.get.out.get.bits.data
+        ddr3CtrlrWrapper.io.s_axis_tvalid_r_0 := split.get.out.get.valid
+        ddr3CtrlrWrapper.io.s_axis_tlast_r_0  := split.get.out.get.bits.last
+        split.get.out.get.ready := true.B
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_r_1  := 0.U
+        ddr3CtrlrWrapper.io.s_axis_tvalid_r_1 := false.B
+        ddr3CtrlrWrapper.io.s_axis_tlast_r_1  := false.B
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_r_2  := 0.U
+        ddr3CtrlrWrapper.io.s_axis_tvalid_r_2 := false.B
+        ddr3CtrlrWrapper.io.s_axis_tlast_r_2  := false.B
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_r_3  := 0.U
+        ddr3CtrlrWrapper.io.s_axis_tvalid_r_3 := false.B
+        ddr3CtrlrWrapper.io.s_axis_tlast_r_3  := false.B
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_r_4  := 0.U
+        ddr3CtrlrWrapper.io.s_axis_tvalid_r_4 := false.B
+        ddr3CtrlrWrapper.io.s_axis_tlast_r_4  := false.B
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_r_5  := 0.U
+        ddr3CtrlrWrapper.io.s_axis_tvalid_r_5 := false.B
+        ddr3CtrlrWrapper.io.s_axis_tlast_r_5  := false.B
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_r_6  := 0.U
+        ddr3CtrlrWrapper.io.s_axis_tvalid_r_6 := false.B
+        ddr3CtrlrWrapper.io.s_axis_tlast_r_6  := false.B
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_r_7  := 0.U
+        ddr3CtrlrWrapper.io.s_axis_tvalid_r_7 := false.B
+        ddr3CtrlrWrapper.io.s_axis_tlast_r_7  := false.B
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_r_8  := 0.U
+        ddr3CtrlrWrapper.io.s_axis_tvalid_r_8 := false.B
+        ddr3CtrlrWrapper.io.s_axis_tlast_r_8  := false.B
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_r_9  := 0.U
+        ddr3CtrlrWrapper.io.s_axis_tvalid_r_9 := false.B
+        ddr3CtrlrWrapper.io.s_axis_tlast_r_9  := false.B
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_r_10  := 0.U
+        ddr3CtrlrWrapper.io.s_axis_tvalid_r_10 := false.B
+        ddr3CtrlrWrapper.io.s_axis_tlast_r_10  := false.B
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_r_11  := 0.U
+        ddr3CtrlrWrapper.io.s_axis_tvalid_r_11 := false.B
+        ddr3CtrlrWrapper.io.s_axis_tlast_r_11  := false.B
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_r_12  := 0.U
+        ddr3CtrlrWrapper.io.s_axis_tvalid_r_12 := false.B
+        ddr3CtrlrWrapper.io.s_axis_tlast_r_12  := false.B
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_r_13  := 0.U
+        ddr3CtrlrWrapper.io.s_axis_tvalid_r_13 := false.B
+        ddr3CtrlrWrapper.io.s_axis_tlast_r_13  := false.B
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_r_14  := 0.U
+        ddr3CtrlrWrapper.io.s_axis_tvalid_r_14 := false.B
+        ddr3CtrlrWrapper.io.s_axis_tlast_r_14  := false.B
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_r_15  := 0.U
+        ddr3CtrlrWrapper.io.s_axis_tvalid_r_15 := false.B
+        ddr3CtrlrWrapper.io.s_axis_tlast_r_15  := false.B
+
+        ///////////////// DOPPLER /////////////////////
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_d_0  := 0.U //dopplerFFTWrapper.module.io.data_out
+        // false if we do not want to to use virtual fifo
+        ddr3CtrlrWrapper.io.s_axis_tvalid_d_0 := false.B//dopplerFFTWrapper.module.io.valid_out //false.B //dopplerFFTWrapper.module.io.valid_out//false.B //dopplerFFTWrapper.module.io.valid_out // disable virtual fifo writing
+        ddr3CtrlrWrapper.io.s_axis_tlast_d_0  := false.B //dopplerFFTWrapper.module.io.last_out
+
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_d_1  := 0.U
+        ddr3CtrlrWrapper.io.s_axis_tvalid_d_1 := false.B
+        ddr3CtrlrWrapper.io.s_axis_tlast_d_1  := false.B
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_d_2  := 0.U
+        ddr3CtrlrWrapper.io.s_axis_tvalid_d_2 := false.B
+        ddr3CtrlrWrapper.io.s_axis_tlast_d_2  := false.B
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_d_3  := 0.U
+        ddr3CtrlrWrapper.io.s_axis_tvalid_d_3 := false.B
+        ddr3CtrlrWrapper.io.s_axis_tlast_d_3  := false.B
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_d_4  := 0.U
+        ddr3CtrlrWrapper.io.s_axis_tvalid_d_4 := false.B
+        ddr3CtrlrWrapper.io.s_axis_tlast_d_4  := false.B
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_d_5  := 0.U
+        ddr3CtrlrWrapper.io.s_axis_tvalid_d_5 := false.B
+        ddr3CtrlrWrapper.io.s_axis_tlast_d_5  := false.B
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_d_6  := 0.U
+        ddr3CtrlrWrapper.io.s_axis_tvalid_d_6 := false.B
+        ddr3CtrlrWrapper.io.s_axis_tlast_d_6  := false.B
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_d_7  := 0.U
+        ddr3CtrlrWrapper.io.s_axis_tvalid_d_7 := false.B
+        ddr3CtrlrWrapper.io.s_axis_tlast_d_7  := false.B
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_d_8  := 0.U
+        ddr3CtrlrWrapper.io.s_axis_tvalid_d_8 := false.B
+        ddr3CtrlrWrapper.io.s_axis_tlast_d_8  := false.B
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_d_9  := 0.U
+        ddr3CtrlrWrapper.io.s_axis_tvalid_d_9 := false.B
+        ddr3CtrlrWrapper.io.s_axis_tlast_d_9  := false.B
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_d_10  := 0.U
+        ddr3CtrlrWrapper.io.s_axis_tvalid_d_10 := false.B
+        ddr3CtrlrWrapper.io.s_axis_tlast_d_10  := false.B
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_d_11  := 0.U
+        ddr3CtrlrWrapper.io.s_axis_tvalid_d_11 := false.B
+        ddr3CtrlrWrapper.io.s_axis_tlast_d_11  := false.B
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_d_12  := 0.U
+        ddr3CtrlrWrapper.io.s_axis_tvalid_d_12 := false.B
+        ddr3CtrlrWrapper.io.s_axis_tlast_d_12  := false.B
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_d_13  := 0.U
+        ddr3CtrlrWrapper.io.s_axis_tvalid_d_13 := false.B
+        ddr3CtrlrWrapper.io.s_axis_tlast_d_13  := false.B
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_d_14  := 0.U
+        ddr3CtrlrWrapper.io.s_axis_tvalid_d_14 := false.B
+        ddr3CtrlrWrapper.io.s_axis_tlast_d_14  := false.B
+
+        ddr3CtrlrWrapper.io.s_axis_tdata_d_15  := 0.U
+        ddr3CtrlrWrapper.io.s_axis_tvalid_d_15 := false.B
+        ddr3CtrlrWrapper.io.s_axis_tlast_d_15  := false.B
+
+        ///////////////////////////////////////////////////
+        ////////////////////// Doppler OUT /////////////////////////////////////////////
+        // drive receiver one to doppler fft!
+
+        queue.get.in.get.bits.data := ddr3CtrlrWrapper.io.m_axis_tdata_d_0
+        queue.get.in.get.valid     := ddr3CtrlrWrapper.io.m_axis_tvalid_d_0
+        queue.get.in.get.bits.last := ddr3CtrlrWrapper.io.m_axis_tlast_d_0
+        ddr3CtrlrWrapper.io.m_axis_tready_d_0 := queue.get.in.get.ready
+
+        //// ethernet signals
+        ddrIO.get.eth3.get.o_data_eth := ddr3CtrlrWrapper.io.o_data_eth
+        ddrIO.get.eth3.get.o_start_eth := ddr3CtrlrWrapper.io.o_start_eth
+        ddrIO.get.eth3.get.o_we_eth := ddr3CtrlrWrapper.io.o_we_eth
+        ddr3CtrlrWrapper.io.i_ready_eth := ddrIO.get.eth3.get.i_ready_eth
+
+        ddrIO.get.ddr3.get.o_MemClk_p := ddr3CtrlrWrapper.io.o_MemClk_p
+        ddrIO.get.ddr3.get.ddr3_addr := ddr3CtrlrWrapper.io.ddr3_addr
+
+        ddrIO.get.ddr3.get.ddr3_ba := ddr3CtrlrWrapper.io.ddr3_ba
+        ddrIO.get.ddr3.get.ddr3_ras_n := ddr3CtrlrWrapper.io.ddr3_ras_n
+        ddrIO.get.ddr3.get.ddr3_cas_n := ddr3CtrlrWrapper.io.ddr3_cas_n
+        ddrIO.get.ddr3.get.ddr3_we_n := ddr3CtrlrWrapper.io.ddr3_we_n
+        ddrIO.get.ddr3.get.ddr3_reset_n := ddr3CtrlrWrapper.io.ddr3_reset_n
+        ddrIO.get.ddr3.get.ddr3_odt := ddr3CtrlrWrapper.io.ddr3_odt
+        ddrIO.get.ddr3.get.ddr3_cke := ddr3CtrlrWrapper.io.ddr3_cke
+        ddrIO.get.ddr3.get.ddr3_dm := ddr3CtrlrWrapper.io.ddr3_dm
+        ddrIO.get.ddr3.get.ddr3_ck_p := ddr3CtrlrWrapper.io.ddr3_ck_p
+        ddrIO.get.ddr3.get.ddr3_ck_n := ddr3CtrlrWrapper.io.ddr3_ck_n
+
+        ddr3CtrlrWrapper.io.s_axis_aclk := clock
+        ddr3CtrlrWrapper.io.m_axis_aclk := clock
+        ddr3CtrlrWrapper.io.s_axis_aresetn := reset_n.get // just temporary solution for reset signal it should be active in 1, that needs to be changed
+        ddr3CtrlrWrapper.io.mem_reset := mem_reset.get
+
+        ddr3CtrlrWrapper.io.sys_clk := ddrIO.get.ddr3.get.sys_clk
+        ddr3CtrlrWrapper.io.clk_ref := ddrIO.get.ddr3.get.clk_ref
+        ddr3CtrlrWrapper.io.ddr3_dq <> ddrIO.get.ddr3.get.ddr3_dq        // this one should be replaced with inout
+        ddr3CtrlrWrapper.io.ddr3_dqs_p <> ddrIO.get.ddr3.get.ddr3_dqs_p  // this one should be replaced with inout
+        ddr3CtrlrWrapper.io.ddr3_dqs_n <> ddrIO.get.ddr3.get.ddr3_dqs_n  // this one should be replaced with inout
+      }
     }
   }
 }

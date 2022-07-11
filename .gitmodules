@@ -36,3 +36,7 @@
 	path = generators/jtag2mm
 	url = https://github.com/milovanovic/jtag2mm.git
 	branch = master
+[submodule "generators/chisel-scope"]
+	path = generators/chisel-scope
+	url = git@github.com:milovanovic/chisel-scope.git
+	branch = master

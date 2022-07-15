@@ -79,6 +79,17 @@ class PLL_DSP extends BlackBox {
     })
 }
 
+// PLL BlackBox for Vivado
+class PLL_HDMI extends BlackBox {
+    val io = IO(new Bundle {
+        val clk_in1  = Input(Clock())
+        val clk_out1 = Output(Clock())
+        val clk_out2 = Output(Clock())
+        val locked   = Output(Bool())
+        val reset    = Input(Bool())
+    })
+}
+
 // RESET SYS BlackBox for Vivado
 class RESET_SYS extends BlackBox {
   val io = IO(new Bundle {

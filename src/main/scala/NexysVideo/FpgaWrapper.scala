@@ -16,7 +16,7 @@ import freechips.rocketchip.diplomacy._
 import spacefft._
 import jtag2mm._
 
-class NexysVideoShellIO extends Bundle {
+class NexysVideoShellIO(val scope: Boolean) extends Bundle {
   val i_data_p  = Input(UInt(1.W))
   val i_data_n  = Input(UInt(1.W))
   val i_valid_p = Input(Bool())
@@ -26,6 +26,15 @@ class NexysVideoShellIO extends Bundle {
   val i_clk_p   = Input(Clock())
   val i_clk_n   = Input(Clock())
   val clock_n   = Input(Clock())
+  // tmds output ports
+  val clk_p  = if (scope) Some(Output(Bool())) else None
+  val clk_n  = if (scope) Some(Output(Bool())) else None
+  val data_p = if (scope) Some(Output(UInt(3.W))) else None
+  val data_n = if (scope) Some(Output(UInt(3.W))) else None
+}
+
+object NexysVideoShellIO {
+  def apply(scope: Boolean): NexysVideoShellIO = new NexysVideoShellIO(scope)
 }
 
 class NexysVideoShell(params: SpaceFFTParameters[FixedPoint], beatBytes: Int) extends LazyModule()(Parameters.empty) {
@@ -33,16 +42,16 @@ class NexysVideoShell(params: SpaceFFTParameters[FixedPoint], beatBytes: Int) ex
   val spacefft = LazyModule(new AXI4SpaceFFT(params, 4) {
     // streamNode
     val ioInNode_1D  = if (lvdsphy == None) Some(BundleBridgeSource(() => new AXI4StreamBundle(AXI4StreamBundleParameters(n = beatBytes)))) else None
-    val ioOutNode_1D = BundleBridgeSink[AXI4StreamBundle]()
-    val ioOutNode_2D = BundleBridgeSink[AXI4StreamBundle]()
+    val ioOutNode_1D = if (scope == None) Some(BundleBridgeSink[AXI4StreamBundle]()) else None
+    val ioOutNode_2D = if (scope == None) Some( BundleBridgeSink[AXI4StreamBundle]()) else None
 
-    if (ioInNode_1D != None) { streamNode := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = beatBytes)) := ioInNode_1D.get }
-    ioOutNode_1D := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := streamNode
-    ioOutNode_2D := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := blocks_2D.last.streamNode
+    if (ioInNode_1D != None)  { streamNode.get := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = beatBytes)) := ioInNode_1D.get }
+    if (ioOutNode_1D != None) { ioOutNode_1D.get := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := streamNode.get }
+    if (ioOutNode_2D != None) { ioOutNode_2D.get := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := blocks_2D.last.streamNode }
 
-    val in_1D = if (ioInNode_1D != None) InModuleBody { ioInNode_1D.get.makeIO() } else None
-    val out_1D = InModuleBody { ioOutNode_1D.makeIO() }
-    val out_2D = InModuleBody { ioOutNode_2D.makeIO() }
+    val in_1D  = if (ioInNode_1D != None)  InModuleBody { ioInNode_1D.get.makeIO() } else None
+    val out_1D = if (ioOutNode_1D != None) InModuleBody { ioOutNode_1D.get.makeIO() } else None
+    val out_2D = if (ioOutNode_2D != None) InModuleBody { ioOutNode_2D.get.makeIO() } else None
 
     // pins
     def makeSpaceFFTIO(): SpaceFFTIO = {
@@ -51,7 +60,7 @@ class NexysVideoShell(params: SpaceFFTParameters[FixedPoint], beatBytes: Int) ex
       io2 <> io
       io2
     }
-    val ioBlock = if (lvdsphy != None || crc_1D != None) Some(InModuleBody { makeSpaceFFTIO() }) else None
+    val ioBlock = if (lvdsphy != None || crc_1D != None || scope != None) Some(InModuleBody { makeSpaceFFTIO() }) else None
   })
 
   // JTAG
@@ -73,15 +82,17 @@ class NexysVideoShell(params: SpaceFFTParameters[FixedPoint], beatBytes: Int) ex
 
   lazy val module = new LazyModuleImp(this) {
     // IO
-    val io = IO(new NexysVideoShellIO)
+    val io = IO(new NexysVideoShellIO(spacefft.scope != None))
     // JTAG IO
     val ioJTAG = IO(jtagModule.ioJTAG.cloneType)
     ioJTAG <> jtagModule.ioJTAG
     
     val pll_lvds = Module(new PLL_LVDS)
     val pll_dsp  = Module(new PLL_DSP)
+    val pll_hdmi = Module(new PLL_HDMI)
     val rst_lvds = Module(new RESET_SYS)
     val rst_dsp  = Module(new RESET_SYS)
+    val rst_hdmi = Module(new RESET_SYS)
 
     // iserdese's
     val selectio_frame = Module(new SelectIO)
@@ -96,6 +107,10 @@ class NexysVideoShell(params: SpaceFFTParameters[FixedPoint], beatBytes: Int) ex
     // pll_dsp
     pll_dsp.io.clk_in1 := clock
     pll_dsp.io.reset := 0.U
+
+    // pll_hdmi
+    pll_hdmi.io.clk_in1 := clock
+    pll_hdmi.io.reset := 0.U
 
     // rst_lvds
     rst_lvds.io.slowest_sync_clk     := pll_lvds.io.clk_out2
@@ -113,6 +128,16 @@ class NexysVideoShell(params: SpaceFFTParameters[FixedPoint], beatBytes: Int) ex
     rst_dsp.io.aux_reset_in         := 0.U
     rst_dsp.io.mb_debug_sys_rst     := 0.U
     rst_dsp.io.dcm_locked           := pll_dsp.io.locked
+    rst_dsp.io.bus_struct_reset     := DontCare
+    rst_dsp.io.interconnect_aresetn := DontCare
+    rst_dsp.io.peripheral_aresetn   := DontCare
+
+    // rst_hdmi
+    rst_dsp.io.slowest_sync_clk     := pll_hdmi.io.clk_out2
+    rst_dsp.io.ext_reset_in         := reset
+    rst_dsp.io.aux_reset_in         := 0.U
+    rst_dsp.io.mb_debug_sys_rst     := 0.U
+    rst_dsp.io.dcm_locked           := pll_hdmi.io.locked
     rst_dsp.io.bus_struct_reset     := DontCare
     rst_dsp.io.interconnect_aresetn := DontCare
     rst_dsp.io.peripheral_aresetn   := DontCare
@@ -182,6 +207,15 @@ class NexysVideoShell(params: SpaceFFTParameters[FixedPoint], beatBytes: Int) ex
     // spacefft clock & reset
     spacefft.module.clock := pll_dsp.io.clk_out1
     spacefft.module.reset := rst_dsp.io.mb_reset
+    spacefft.ioBlock.get.clk_pixel.get  := pll_hdmi.io.clk_out2
+    spacefft.ioBlock.get.clk_serdes.get := pll_hdmi.io.clk_out1
+    spacefft.ioBlock.get.reset_hdmi.get := rst_hdmi.io.mb_reset
+
+    // HDMI pins
+    io.clk_p.get  := spacefft.ioBlock.get.clk_p.get
+    io.clk_n.get  := spacefft.ioBlock.get.clk_n.get
+    io.data_p.get := spacefft.ioBlock.get.data_p.get
+    io.data_n.get := spacefft.ioBlock.get.data_n.get
 
     // jtag clock and reset
     jtagModule.module.clock := pll_dsp.io.clk_out1
@@ -193,7 +227,7 @@ object NexysVideoShellApp extends App
 {
   implicit val p: Parameters = Parameters.empty
 
-  val params = (new SpaceFFTParams(512, 256, DDR3)).params
+  val params = (new SpaceFFTScopeParams(512, 256, DDR3)).params
   val lazyDut = LazyModule(new NexysVideoShell(params, 4))
 
   (new ChiselStage).execute(Array("--target-dir", "verilog/NexysVideoShell"), Seq(ChiselGeneratorAnnotation(() => lazyDut.module)))

@@ -33,16 +33,16 @@ class ZCU102Shell(params: SpaceFFTParameters[FixedPoint], beatBytes: Int) extend
   val spacefft = LazyModule(new AXI4SpaceFFT(params, 4) {
     // streamNode
     val ioInNode_1D  = if (lvdsphy == None) Some(BundleBridgeSource(() => new AXI4StreamBundle(AXI4StreamBundleParameters(n = beatBytes)))) else None
-    val ioOutNode_1D = BundleBridgeSink[AXI4StreamBundle]()
-    val ioOutNode_2D = BundleBridgeSink[AXI4StreamBundle]()
+    val ioOutNode_1D = if (scope == None) Some(BundleBridgeSink[AXI4StreamBundle]()) else None
+    val ioOutNode_2D = if (scope == None) Some( BundleBridgeSink[AXI4StreamBundle]()) else None
 
-    if (ioInNode_1D != None) { streamNode := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = beatBytes)) := ioInNode_1D.get }
-    ioOutNode_1D := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := streamNode
-    ioOutNode_2D := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := blocks_2D.last.streamNode
+    if (ioInNode_1D != None)  { streamNode.get := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = beatBytes)) := ioInNode_1D.get }
+    if (ioOutNode_1D != None) { ioOutNode_1D.get := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := streamNode.get }
+    if (ioOutNode_2D != None) { ioOutNode_2D.get := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := blocks_2D.last.streamNode }
 
-    val in_1D = if (ioInNode_1D != None) InModuleBody { ioInNode_1D.get.makeIO() } else None
-    val out_1D = InModuleBody { ioOutNode_1D.makeIO() }
-    val out_2D = InModuleBody { ioOutNode_2D.makeIO() }
+    val in_1D  = if (ioInNode_1D != None)  InModuleBody { ioInNode_1D.get.makeIO()  } else None
+    val out_1D = if (ioOutNode_1D != None) InModuleBody { ioOutNode_1D.get.makeIO() } else None
+    val out_2D = if (ioOutNode_2D != None) InModuleBody { ioOutNode_2D.get.makeIO() } else None
 
     // pins
     def makeSpaceFFTIO(): SpaceFFTIO = {

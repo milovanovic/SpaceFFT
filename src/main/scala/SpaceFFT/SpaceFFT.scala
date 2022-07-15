@@ -27,17 +27,21 @@ import windowing._
 import magnitude._
 import accumulator._
 import cfar._
+import hdmi.scope._
 
-class AXI4SpaceFFT[T <: Data : Real: BinaryRepresentation](params: SpaceFFTParameters[T], beatBytes: Int)(implicit p: Parameters) extends SpaceFFT[T, AXI4MasterPortParameters, AXI4SlavePortParameters, AXI4EdgeParameters, AXI4EdgeParameters, AXI4Bundle](params, beatBytes) with AXI4DspBlock {
+class AXI4SpaceFFT[T <: Data : Real: BinaryRepresentation](params: SpaceFFTParameters[T], beatBytes: Int)(implicit p: Parameters) extends SpaceFFT[T, AXI4MasterPortParameters, AXI4SlavePortParameters, AXI4EdgeParameters, AXI4EdgeParameters, AXI4Bundle](params, beatBytes) {
   /* Optional memory mapped port */
   val bus = if (blocks.isEmpty) None else Some(LazyModule(new AXI4Xbar))
-  override val mem = if (blocks.isEmpty) None else Some(bus.get.node)
+  val mem = if (blocks.isEmpty) None else Some(bus.get.node)
   for (b <- blocks) {
     b.mem.foreach { _ := bus.get.node }
   }
+  if (scope != None) {
+    scope.get.mem.get := bus.get.node
+  }
 }
 
-class SpaceFFTIO(val phy: Boolean, val crc: Boolean) extends Bundle {
+class SpaceFFTIO(val phy: Boolean, val crc: Boolean, val scope: Boolean) extends Bundle {
   val i_data   = if (phy) Some(Input(UInt(8.W))) else None
   val i_valid  = if (phy) Some(Input(UInt(8.W))) else None
   val i_frame  = if (phy) Some(Input(UInt(8.W))) else None
@@ -48,9 +52,20 @@ class SpaceFFTIO(val phy: Boolean, val crc: Boolean) extends Bundle {
 
   val word_size = if (crc == true && phy == false) Some(Input(UInt(2.W))) else None
   val crc_en    = if (crc == true && phy == false) Some(Input(UInt(1.W))) else None
+
+  // tmds output ports
+  val clk_p  = if (scope) Some(Output(Bool())) else None
+  val clk_n  = if (scope) Some(Output(Bool())) else None
+  val data_p = if (scope) Some(Output(UInt(3.W))) else None
+  val data_n = if (scope) Some(Output(UInt(3.W))) else None
+
+  // Reset and clock
+  val clk_pixel  = if (scope) Some(Input(Clock())) else None
+  val clk_serdes = if (scope) Some(Input(Clock())) else None
+  val reset_hdmi = if (scope) Some(Input(Bool())) else None
 }
 object SpaceFFTIO {
-  def apply(phy: Boolean, crc: Boolean): SpaceFFTIO = new SpaceFFTIO(phy, crc)
+  def apply(phy: Boolean, crc: Boolean, scope: Boolean): SpaceFFTIO = new SpaceFFTIO(phy, crc, scope)
 }
 
 trait AXI4SpaceFFTPins extends AXI4SpaceFFT[FixedPoint] {
@@ -67,16 +82,16 @@ trait AXI4SpaceFFTPins extends AXI4SpaceFFT[FixedPoint] {
 
   // streamNode
   val ioInNode_1D  = if (lvdsphy == None) Some(BundleBridgeSource(() => new AXI4StreamBundle(AXI4StreamBundleParameters(n = beatBytes)))) else None
-  val ioOutNode_1D = BundleBridgeSink[AXI4StreamBundle]()
-  val ioOutNode_2D = BundleBridgeSink[AXI4StreamBundle]()
+  val ioOutNode_1D = if (scope == None) Some(BundleBridgeSink[AXI4StreamBundle]()) else None
+  val ioOutNode_2D = if (scope == None) Some( BundleBridgeSink[AXI4StreamBundle]()) else None
 
-  if (ioInNode_1D != None) { streamNode := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = beatBytes)) := ioInNode_1D.get }
-  ioOutNode_1D := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := streamNode
-  ioOutNode_2D := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := blocks_2D.last.streamNode
+  if (ioInNode_1D != None)  { streamNode.get := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = beatBytes)) := ioInNode_1D.get }
+  if (ioOutNode_1D != None) { ioOutNode_1D.get := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := streamNode.get }
+  if (ioOutNode_2D != None) { ioOutNode_2D.get := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := blocks_2D.last.streamNode }
 
-  val in_1D = if (ioInNode_1D != None) InModuleBody { ioInNode_1D.get.makeIO() } else None
-  val out_1D = InModuleBody { ioOutNode_1D.makeIO() }
-  val out_2D = InModuleBody { ioOutNode_2D.makeIO() }
+  val in_1D  = if (ioInNode_1D != None)  InModuleBody { ioInNode_1D.get.makeIO()  } else None
+  val out_1D = if (ioOutNode_1D != None) InModuleBody { ioOutNode_1D.get.makeIO() } else None
+  val out_2D = if (ioOutNode_2D != None) InModuleBody { ioOutNode_2D.get.makeIO() } else None
 
   // pins
   def makeSpaceFFTIO(): SpaceFFTIO = {
@@ -85,10 +100,10 @@ trait AXI4SpaceFFTPins extends AXI4SpaceFFT[FixedPoint] {
     io2 <> io
     io2
   }
-  val ioBlock = if (lvdsphy != None || crc_1D != None) Some(InModuleBody { makeSpaceFFTIO() }) else None
+  val ioBlock = if (lvdsphy != None || crc_1D != None || scope != None) Some(InModuleBody { makeSpaceFFTIO() }) else None
 }
 
-abstract class SpaceFFT [T <: Data : Real: BinaryRepresentation, D, U, E, O, B <: Data] (params: SpaceFFTParameters[T], beatBytes: Int) extends LazyModule()(Parameters.empty) with DspBlock[D, U, E, O, B] {
+abstract class SpaceFFT [T <: Data : Real: BinaryRepresentation, D, U, E, O, B <: Data] (params: SpaceFFTParameters[T], beatBytes: Int) extends LazyModule()(Parameters.empty) {
   /* 2D fft condition */
   val fft2DCond = params.fft1DParams != None && params.fft2DParams != None
   /* DDR condition */
@@ -125,6 +140,7 @@ abstract class SpaceFFT [T <: Data : Real: BinaryRepresentation, D, U, E, O, B <
   val ctrl_2D = if (fft2DCond && params.ddrParams == None) Some(LazyModule(new AXI4StreamFFT2ControlBlock(params.ctrl2DParams.get.ctrl2DParams, params.ctrl2DParams.get.ctrl2DAddress, _beatBytes = beatBytes))) else None
   val fft_2D  = if (fft2DCond) Some(LazyModule(new AXI4FFTBlock(address = params.fft2DParams.get.fftAddress, params = params.fft2DParams.get.fftParams, _beatBytes = beatBytes, configInterface = false))) else None
   val mag_2D  = if (params.mag2DParams != None && fft2DCond) Some(LazyModule(new AXI4LogMagMuxBlock(params.mag2DParams.get.magParams, params.mag2DParams.get.magAddress, _beatBytes = beatBytes))) else None
+  val scope   = if (params.scopeParams != None && mag_2D != None && cfar_1D != None) Some(LazyModule(new AXI4Scope(params.scopeParams.get.scopeParams, beatBytes))) else None
 
   val split = if (fft2DCond) Some(LazyModule(new AXI4Splitter(address = params.splitParams.get.splitAddress, beatBytes){
     val out = if (ddrCond) Some({
@@ -160,14 +176,31 @@ abstract class SpaceFFT [T <: Data : Real: BinaryRepresentation, D, U, E, O, B <
     lhs.streamNode := AXI4StreamBuffer() := rhs.streamNode
   }
 
-  /* Optional streamNode */
-  val streamNode = if(lvdsphy != None) blocks_1D.last.streamNode else NodeHandle(blocks_1D.head.streamNode, blocks_1D.last.streamNode)
+  // Connect scope
+  if (scope != None) {
+    scope.get.streamNode := blocks_1D.last.streamNode
+    scope.get.streamNode2 := blocks_2D.last.streamNode
+  }
 
-  /* Optional CRC pins */
-  lazy val io = Wire(new SpaceFFTIO(lvdsphy != None, crc_1D != None))
+  /* Optional streamNode */
+  val streamNode: Option[AXI4StreamNodeHandle] = if (scope != None) None else if(lvdsphy != None && scope == None) Some(blocks_1D.last.streamNode) else Some(NodeHandle(blocks_1D.head.streamNode, blocks_1D.last.streamNode))
+
+  /* Optional CRC and HDMI pins */
+  lazy val io = Wire(new SpaceFFTIO(lvdsphy != None, crc_1D != None, scope != None))
 
   /* Module */
   lazy val module = new LazyModuleImp(this) {
+    /* If Scope exists, connect pins */
+    if (scope != None) {
+      scope.get.module.io.clk_pixel  := io.clk_pixel.get
+      scope.get.module.io.clk_serdes := io.clk_serdes.get
+      scope.get.module.io.reset_hdmi := io.reset_hdmi.get
+
+      io.clk_p.get  := scope.get.module.io.clk_p
+      io.clk_n.get  := scope.get.module.io.clk_n
+      io.data_p.get := scope.get.module.io.data_p
+      io.data_n.get := scope.get.module.io.data_n
+    }
     /* If LVDS PHY exists, connect pins */
     if (lvdsphy != None) {
       lvdsphy.get.ioBlock.i_data(0) := io.i_data.get
@@ -590,3 +623,12 @@ object SpaceFFTnoDDRApp extends App
   (new ChiselStage).execute(Array("--target-dir", "verilog/SpaceFFT"), Seq(ChiselGeneratorAnnotation(() => lazyDut.module)))
 }
 
+object SpaceFFTScopeDDRApp extends App
+{
+  implicit val p: Parameters = Parameters.empty
+
+  val params = (new SpaceFFTScopeParams).params
+  val lazyDut = LazyModule(new AXI4SpaceFFT(params, 4) with AXI4SpaceFFTPins)
+
+  (new ChiselStage).execute(Array("--target-dir", "verilog/SpaceFFT"), Seq(ChiselGeneratorAnnotation(() => lazyDut.module)))
+}

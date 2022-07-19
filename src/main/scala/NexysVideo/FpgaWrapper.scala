@@ -31,6 +31,12 @@ class NexysVideoShellIO(val scope: Boolean) extends Bundle {
   val clk_n  = if (scope) Some(Output(Bool())) else None
   val data_p = if (scope) Some(Output(UInt(3.W))) else None
   val data_n = if (scope) Some(Output(UInt(3.W))) else None
+
+  // JTAG input ports
+  val TDI  = Input(Bool())
+  val TMS  = Input(Bool())
+  val TCK  = Input(Bool())
+  val ARST = Input(Bool())
 }
 
 object NexysVideoShellIO {
@@ -84,8 +90,10 @@ class NexysVideoShell(params: SpaceFFTParameters[FixedPoint], beatBytes: Int) ex
     // IO
     val io = IO(new NexysVideoShellIO(spacefft.scope != None))
     // JTAG IO
-    val ioJTAG = IO(jtagModule.ioJTAG.cloneType)
-    ioJTAG <> jtagModule.ioJTAG
+    jtagModule.ioJTAG.jtag.TCK   := io.TCK
+    jtagModule.ioJTAG.jtag.TMS   := io.TMS
+    jtagModule.ioJTAG.jtag.TDI   := io.TDI
+    jtagModule.ioJTAG.asyncReset := io.ARST
     
     val pll_lvds = Module(new PLL_LVDS)
     val pll_dsp  = Module(new PLL_DSP)

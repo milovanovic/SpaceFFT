@@ -575,3 +575,262 @@ class SpaceFFTScopeParams(rangeFFTSize: Int = 512, dopplerFFTSize: Int = 256, dd
     ))
   )
 }
+
+
+/* SpaceFFTParams declaration, DDR3, HDMI scope */
+class SpaceFFTSmallScopeParams(rangeFFTSize: Int = 512, dopplerFFTSize: Int = 256, ddrType: DDRType = DDR3) {
+  val params : SpaceFFTParameters[FixedPoint] = SpaceFFTParameters (
+    // Range parameters
+    lvds1DParams = Some(LVDSPHYParamsAndAddresses(
+      lvdsphyParams = DataRXParams(
+        channels = 1,
+        asyncParams = Some(AXI4StreamAsyncQueueWithControlParams(
+          ctrlBits   = 3,
+          sync       = 4,
+          depth      = 32,
+          safe       = true
+        ))
+      )
+    )),
+    crc1DParams = None,
+    prep1DParams = Some(PreprocParamsAndAddresses(
+      prepParams = AXI4XwrDataPreProcParams(maxFFTSize = rangeFFTSize, useBlockRam = true),
+      prepAddress = AddressSet(0x60000100, 0xFF)
+    )),
+    win1DParams = None,
+    fft1DParams = Some(FFTParamsAndAddresses(
+      fftParams = FFTParams.fixed(
+        dataWidth = 16,
+        twiddleWidth = 16,
+        numPoints = rangeFFTSize,
+        useBitReverse  = true,
+        runTime = true,
+        numAddPipes = 1,
+        numMulPipes = 1,
+        use4Muls = true,
+        //sdfRadix = "2",
+        expandLogic = Array.fill(log2Up(rangeFFTSize))(0),//(1).zipWithIndex.map { case (e,ind) => if (ind < 4) 1 else 0 }, // expand first four stages, other do not grow
+        keepMSBorLSB = Array.fill(log2Up(rangeFFTSize))(true),
+        minSRAMdepth = rangeFFTSize, // memories larger than 64 should be mapped on block ram
+        binPoint = 14
+      ),
+      fftAddress = AddressSet(0x60000300, 0xFF)
+    )),
+    mag1DParams = Some(MagParamsAndAddresses(
+      magParams = MAGParams(
+        protoIn  = FixedPoint(16.W, 14.BP),
+        protoOut = FixedPoint(16.W, 14.BP),
+        protoLog = Some(FixedPoint(16.W, 14.BP)),
+        magType  = MagJPLandSqrMag,
+        log2LookUpWidth = 14,
+        useLast = true,
+        numAddPipes = 1,
+        numMulPipes = 1
+      ),
+      magAddress = AddressSet(0x60000400, 0xFF),
+    )),
+    acc1DParams = None,
+    cfar1DParams = Some(CFARParamsAndAddresses(
+      cfarParams = CFARParams(
+        protoIn = FixedPoint(16.W, 14.BP),
+        protoThreshold = FixedPoint(16.W, 14.BP),
+        protoScaler = FixedPoint(16.W, 14.BP),
+        leadLaggWindowSize = 64,
+        guardWindowSize = 8,
+        logOrLinReg = false,
+        retiming = false,
+        fftSize = rangeFFTSize,
+        sendCut = true,
+        minSubWindowSize = None,
+        includeCASH = false,
+        CFARAlgorithm = CACFARType,
+        numAddPipes = 1,                  // number of add pipeline registers
+        numMulPipes = 1                   // number of mull pipeline registers
+      ),
+      cfarAddress   = AddressSet(0x60000600, 0xFF)
+    )),
+    // Doppler parameters
+    ctrl2DParams = Some(Ctrl2DParamsAndAddresses(
+      ctrl2DParams =  FFT2ControlParams(rangeFFTSize = rangeFFTSize, dopplerFFTSize = dopplerFFTSize),
+      ctrl2DAddress = AddressSet(0x60000700, 0xFF)
+    )),
+    ddrParams = Some(DDRParamsAndAddresses(
+      ddrParams = ddrType
+    )),
+    queueParams = Some(QueueParamsAndAddresses(
+      queueParams = DspQueueCustomParams(
+        queueDepth = dopplerFFTSize, // should be the same as max dopplerFFTSize
+        progFull = false,
+        addEnProgFullOut = false,
+        useSyncReadMem = false, // do not use distributed ram, trying to eliminate timing issues
+        enLastGen = false
+      ),
+      queueAddress = AddressSet(0x60003000, 0xFFF)
+    )),
+    splitParams = Some(SplitParamsAndAddresses(
+      splitAddress = AddressSet(0x60000800, 0xFF)
+    )),
+    fft2DParams = Some(FFTParamsAndAddresses(
+      fftParams = FFTParams.fixed(
+        dataWidth = 16,
+        twiddleWidth = 16,
+        numPoints = dopplerFFTSize,
+        useBitReverse  = true,
+        runTime = true,
+        numAddPipes = 1,
+        numMulPipes = 1,
+        use4Muls = true,
+        //sdfRadix = "2",
+        expandLogic = Array.fill(log2Up(dopplerFFTSize))(0),//(1).zipWithIndex.map { case (e,ind) => if (ind < 4) 1 else 0 }, // expand first four stages, other do not grow
+        keepMSBorLSB = Array.fill(log2Up(dopplerFFTSize))(true),
+        minSRAMdepth = dopplerFFTSize, // memories larger than 64 should be mapped on block ram
+        binPoint = 14
+      ),
+      fftAddress = AddressSet(0x60000900, 0xFF)
+    )),
+    mag2DParams = Some(MagParamsAndAddresses(
+      magParams = MAGParams(
+        protoIn  = FixedPoint(16.W, 14.BP),
+        protoOut = FixedPoint(16.W, 14.BP),
+        protoLog = Some(FixedPoint(16.W, 14.BP)),
+        magType  = MagJPLandSqrMag,
+        log2LookUpWidth = 14,
+        useLast = true,
+        numAddPipes = 1,
+        numMulPipes = 1
+      ),
+      magAddress = AddressSet(0x60000A00, 0xFF),
+    )),
+    scopeParams = Some(ScopeParamsAndAddresses(
+      scopeParams = (new ScopeParams(rangeSize = rangeFFTSize, dopplerSize = dopplerFFTSize, startAddress = 0x60000B00)).params
+    ))
+  )
+}
+
+/* SpaceFFTParams declaration, HDMI scope */
+class SpaceFFTSmallScopeNoDDRParams(rangeFFTSize: Int = 512, dopplerFFTSize: Int = 256) {
+  val params : SpaceFFTParameters[FixedPoint] = SpaceFFTParameters (
+    // Range parameters
+    lvds1DParams = Some(LVDSPHYParamsAndAddresses(
+      lvdsphyParams = DataRXParams(
+        channels = 1,
+        asyncParams = Some(AXI4StreamAsyncQueueWithControlParams(
+          ctrlBits   = 3,
+          sync       = 4,
+          depth      = 32,
+          safe       = true
+        ))
+      )
+    )),
+    crc1DParams = None,
+    prep1DParams = Some(PreprocParamsAndAddresses(
+      prepParams = AXI4XwrDataPreProcParams(maxFFTSize = rangeFFTSize, useBlockRam = true),
+      prepAddress = AddressSet(0x60000100, 0xFF)
+    )),
+    win1DParams = None,
+    fft1DParams = Some(FFTParamsAndAddresses(
+      fftParams = FFTParams.fixed(
+        dataWidth = 16,
+        twiddleWidth = 16,
+        numPoints = rangeFFTSize,
+        useBitReverse  = true,
+        runTime = true,
+        numAddPipes = 1,
+        numMulPipes = 1,
+        use4Muls = true,
+        //sdfRadix = "2",
+        expandLogic = Array.fill(log2Up(rangeFFTSize))(0),//(1).zipWithIndex.map { case (e,ind) => if (ind < 4) 1 else 0 }, // expand first four stages, other do not grow
+        keepMSBorLSB = Array.fill(log2Up(rangeFFTSize))(true),
+        minSRAMdepth = rangeFFTSize, // memories larger than 64 should be mapped on block ram
+        binPoint = 14
+      ),
+      fftAddress = AddressSet(0x60000300, 0xFF)
+    )),
+    mag1DParams = Some(MagParamsAndAddresses(
+      magParams = MAGParams(
+        protoIn  = FixedPoint(16.W, 14.BP),
+        protoOut = FixedPoint(16.W, 14.BP),
+        protoLog = Some(FixedPoint(16.W, 14.BP)),
+        magType  = MagJPLandSqrMag,
+        log2LookUpWidth = 14,
+        useLast = true,
+        numAddPipes = 1,
+        numMulPipes = 1
+      ),
+      magAddress = AddressSet(0x60000400, 0xFF),
+    )),
+    acc1DParams = None,
+    cfar1DParams = Some(CFARParamsAndAddresses(
+      cfarParams = CFARParams(
+        protoIn = FixedPoint(16.W, 14.BP),
+        protoThreshold = FixedPoint(16.W, 14.BP),
+        protoScaler = FixedPoint(16.W, 14.BP),
+        leadLaggWindowSize = 64,
+        guardWindowSize = 8,
+        logOrLinReg = false,
+        retiming = false,
+        fftSize = rangeFFTSize,
+        sendCut = true,
+        minSubWindowSize = None,
+        includeCASH = false,
+        CFARAlgorithm = CACFARType,
+        numAddPipes = 1,                  // number of add pipeline registers
+        numMulPipes = 1                   // number of mull pipeline registers
+      ),
+      cfarAddress   = AddressSet(0x60000600, 0xFF)
+    )),
+    // Doppler parameters
+    ctrl2DParams = Some(Ctrl2DParamsAndAddresses(
+      ctrl2DParams =  FFT2ControlParams(rangeFFTSize = rangeFFTSize, dopplerFFTSize = dopplerFFTSize),
+      ctrl2DAddress = AddressSet(0x60000700, 0xFF)
+    )),
+    ddrParams = None,
+    queueParams = Some(QueueParamsAndAddresses(
+      queueParams = DspQueueCustomParams(
+        queueDepth = dopplerFFTSize, // should be the same as max dopplerFFTSize
+        progFull = false,
+        addEnProgFullOut = false,
+        useSyncReadMem = false, // do not use distributed ram, trying to eliminate timing issues
+        enLastGen = false
+      ),
+      queueAddress = AddressSet(0x60003000, 0xFFF)
+    )),
+    splitParams = Some(SplitParamsAndAddresses(
+      splitAddress = AddressSet(0x60000800, 0xFF)
+    )),
+    fft2DParams = Some(FFTParamsAndAddresses(
+      fftParams = FFTParams.fixed(
+        dataWidth = 16,
+        twiddleWidth = 16,
+        numPoints = dopplerFFTSize,
+        useBitReverse  = true,
+        runTime = true,
+        numAddPipes = 1,
+        numMulPipes = 1,
+        use4Muls = true,
+        //sdfRadix = "2",
+        expandLogic = Array.fill(log2Up(dopplerFFTSize))(0),//(1).zipWithIndex.map { case (e,ind) => if (ind < 4) 1 else 0 }, // expand first four stages, other do not grow
+        keepMSBorLSB = Array.fill(log2Up(dopplerFFTSize))(true),
+        minSRAMdepth = dopplerFFTSize, // memories larger than 64 should be mapped on block ram
+        binPoint = 14
+      ),
+      fftAddress = AddressSet(0x60000900, 0xFF)
+    )),
+    mag2DParams = Some(MagParamsAndAddresses(
+      magParams = MAGParams(
+        protoIn  = FixedPoint(16.W, 14.BP),
+        protoOut = FixedPoint(16.W, 14.BP),
+        protoLog = Some(FixedPoint(16.W, 14.BP)),
+        magType  = MagJPLandSqrMag,
+        log2LookUpWidth = 14,
+        useLast = true,
+        numAddPipes = 1,
+        numMulPipes = 1
+      ),
+      magAddress = AddressSet(0x60000A00, 0xFF),
+    )),
+    scopeParams = Some(ScopeParamsAndAddresses(
+      scopeParams = (new ScopeParams(rangeSize = rangeFFTSize, dopplerSize = dopplerFFTSize, startAddress = 0x60000B00)).params
+    ))
+  )
+}

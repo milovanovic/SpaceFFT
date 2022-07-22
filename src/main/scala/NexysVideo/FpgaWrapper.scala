@@ -16,7 +16,7 @@ import freechips.rocketchip.diplomacy._
 import spacefft._
 import jtag2mm._
 
-class NexysVideoShellIO(val scope: Boolean) extends Bundle {
+class NexysVideoShellIO(val scope: Boolean, val ddr3: Boolean) extends Bundle {
   val i_data_p  = Input(UInt(1.W))
   val i_data_n  = Input(UInt(1.W))
   val i_valid_p = Input(Bool())
@@ -37,10 +37,26 @@ class NexysVideoShellIO(val scope: Boolean) extends Bundle {
   val TMS  = Input(Bool())
   val TCK  = Input(Bool())
   val ARST = Input(Bool())
+
+  // DDR3
+  val ddr3_dq      = if (ddr3) Some(Analog((16.W))) else None
+  val ddr3_addr    = if (ddr3) Some(Output(UInt(15.W))) else None
+  val ddr3_ba      = if (ddr3) Some(Output(UInt(3.W))) else None
+  val ddr3_ras_n   = if (ddr3) Some(Output(Bool())) else None
+  val ddr3_cas_n   = if (ddr3) Some(Output(Bool())) else None
+  val ddr3_we_n    = if (ddr3) Some(Output(Bool())) else None
+  val ddr3_reset_n = if (ddr3) Some(Output(Bool())) else None
+  val ddr3_odt     = if (ddr3) Some(Output(Bool())) else None
+  val ddr3_cke     = if (ddr3) Some(Output(Bool())) else None
+  val ddr3_dm      = if (ddr3) Some(Output(UInt(2.W))) else None
+  val ddr3_dqs_p   = if (ddr3) Some(Analog((2.W))) else None
+  val ddr3_dqs_n   = if (ddr3) Some(Analog((2.W))) else None
+  val ddr3_ck_p    = if (ddr3) Some(Output(Bool())) else None
+  val ddr3_ck_n    = if (ddr3) Some(Output(Bool())) else None
 }
 
 object NexysVideoShellIO {
-  def apply(scope: Boolean): NexysVideoShellIO = new NexysVideoShellIO(scope)
+  def apply(scope: Boolean, ddr3: Boolean): NexysVideoShellIO = new NexysVideoShellIO(scope, ddr3)
 }
 
 class NexysVideoShell(params: SpaceFFTParameters[FixedPoint], beatBytes: Int) extends LazyModule()(Parameters.empty) {
@@ -83,42 +99,48 @@ class NexysVideoShell(params: SpaceFFTParameters[FixedPoint], beatBytes: Int) ex
   // Connect mem node
   val bus = LazyModule(new AXI4Xbar)
   val mem = Some(bus.node)
-  spacefft.mem.get    := bus.node
+  spacefft.mem.get := bus.node
   mem.get := jtagModule.node.get
 
   lazy val module = new LazyModuleImp(this) {
     // IO
-    val io = IO(new NexysVideoShellIO(spacefft.scope != None))
+    val io = IO(new NexysVideoShellIO(spacefft.scope != None, spacefft.ddrCond))
     // JTAG IO
     jtagModule.ioJTAG.jtag.TCK   := io.TCK
     jtagModule.ioJTAG.jtag.TMS   := io.TMS
     jtagModule.ioJTAG.jtag.TDI   := io.TDI
     jtagModule.ioJTAG.asyncReset := io.ARST
-    
+    // PLL & RESETS
     val pll_lvds = Module(new PLL_LVDS)
     val pll_dsp  = Module(new PLL_DSP)
     val pll_hdmi = Module(new PLL_HDMI)
     val rst_lvds = Module(new RESET_SYS)
     val rst_dsp  = Module(new RESET_SYS)
     val rst_hdmi = Module(new RESET_SYS)
+    // Buffers
+    val buff_clk = Module(new IBUFG)
+    // val pixbufg = Module(new BUFG)
+    // val bufio = Module(new BUFIO)
+    // val bufr = Module(new BUFR())
 
     // iserdese's
     val selectio_frame = Module(new SelectIO)
     val selectio_valid = Module(new SelectIO)
     val selectio_data  = Module(new SelectIO)
 
+    buff_clk.io.I := clock
+    // pll_dsp
+    pll_dsp.io.clk_in1 := buff_clk.io.O
+    pll_dsp.io.reset := 0.U
+
+    // pll_hdmi
+    pll_hdmi.io.clk_in1 := buff_clk.io.O
+    pll_hdmi.io.reset := 0.U
+
     // pll_lvds
     pll_lvds.io.clk_in1_p := io.i_clk_p
     pll_lvds.io.clk_in1_n := io.i_clk_n
     pll_lvds.io.reset := 0.U
-
-    // pll_dsp
-    pll_dsp.io.clk_in1 := clock
-    pll_dsp.io.reset := 0.U
-
-    // pll_hdmi
-    pll_hdmi.io.clk_in1 := clock
-    pll_hdmi.io.reset := 0.U
 
     // rst_lvds
     rst_lvds.io.slowest_sync_clk     := pll_lvds.io.clk_out2
@@ -141,14 +163,14 @@ class NexysVideoShell(params: SpaceFFTParameters[FixedPoint], beatBytes: Int) ex
     rst_dsp.io.peripheral_aresetn   := DontCare
 
     // rst_hdmi
-    rst_dsp.io.slowest_sync_clk     := pll_hdmi.io.clk_out2
-    rst_dsp.io.ext_reset_in         := reset
-    rst_dsp.io.aux_reset_in         := 0.U
-    rst_dsp.io.mb_debug_sys_rst     := 0.U
-    rst_dsp.io.dcm_locked           := pll_hdmi.io.locked
-    rst_dsp.io.bus_struct_reset     := DontCare
-    rst_dsp.io.interconnect_aresetn := DontCare
-    rst_dsp.io.peripheral_aresetn   := DontCare
+    rst_hdmi.io.slowest_sync_clk     := pll_hdmi.io.clk_out2
+    rst_hdmi.io.ext_reset_in         := reset
+    rst_hdmi.io.aux_reset_in         := 0.U
+    rst_hdmi.io.mb_debug_sys_rst     := 0.U
+    rst_hdmi.io.dcm_locked           := pll_hdmi.io.locked
+    rst_hdmi.io.bus_struct_reset     := DontCare
+    rst_hdmi.io.interconnect_aresetn := DontCare
+    rst_hdmi.io.peripheral_aresetn   := DontCare
 
     // selectIO frame
     selectio_frame.io.clk_in     := pll_lvds.io.clk_out1
@@ -181,36 +203,32 @@ class NexysVideoShell(params: SpaceFFTParameters[FixedPoint], beatBytes: Int) ex
     spacefft.ioBlock.get.i_frame.get := selectio_frame.io.data_in_to_device
     spacefft.ioBlock.get.i_valid.get := selectio_valid.io.data_in_to_device
 
-    // DDR3 IOs
-    val ddr3_dq      = IO(Analog((16.W)))
-    val ddr3_addr    = IO(Output(UInt(15.W)))
-    val ddr3_ba      = IO(Output(UInt(3.W)))
-    val ddr3_ras_n   = IO(Output(Bool()))
-    val ddr3_cas_n   = IO(Output(Bool()))
-    val ddr3_we_n    = IO(Output(Bool()))
-    val ddr3_reset_n = IO(Output(Bool()))
-    val ddr3_odt     = IO(Output(Bool()))
-    val ddr3_cke     = IO(Output(Bool()))
-    val ddr3_dm      = IO(Output(UInt(2.W)))
-    val ddr3_dqs_p   = IO(Analog((2.W)))
-    val ddr3_dqs_n   = IO(Analog((2.W)))
-    val ddr3_ck_p    = IO(Output(Bool()))
-    val ddr3_ck_n    = IO(Output(Bool()))
+    if (spacefft.ddrCond) {
+      // ethernet signals
+      spacefft.module.ddrIO.get.eth3.get.i_ready_eth := 0.U 
 
-    // // ethernet signals
-    // ethIO.o_data_eth := rspchain.module.ethIO.o_data_eth
-    // ethIO.o_start_eth := rspchain.module.ethIO.o_start_eth
-    // ethIO.o_we_eth := rspchain.module.ethIO.o_we_eth
-    spacefft.module.ddrIO.get.eth3.get.i_ready_eth := 0.U //ethIO.i_ready_eth
+      io.ddr3_addr.get    := spacefft.module.ddrIO.get.ddr3.get.ddr3_addr
+      io.ddr3_ba.get      := spacefft.module.ddrIO.get.ddr3.get.ddr3_ba
+      io.ddr3_ras_n.get   := spacefft.module.ddrIO.get.ddr3.get.ddr3_ras_n
+      io.ddr3_cas_n.get   := spacefft.module.ddrIO.get.ddr3.get.ddr3_cas_n
+      io.ddr3_we_n.get    := spacefft.module.ddrIO.get.ddr3.get.ddr3_we_n
+      io.ddr3_reset_n.get := spacefft.module.ddrIO.get.ddr3.get.ddr3_reset_n
+      io.ddr3_odt.get     := spacefft.module.ddrIO.get.ddr3.get.ddr3_odt
+      io.ddr3_cke.get     := spacefft.module.ddrIO.get.ddr3.get.ddr3_cke
+      io.ddr3_dm.get      := spacefft.module.ddrIO.get.ddr3.get.ddr3_dm
+      io.ddr3_ck_p.get    := spacefft.module.ddrIO.get.ddr3.get.ddr3_ck_p
+      io.ddr3_ck_n.get    := spacefft.module.ddrIO.get.ddr3.get.ddr3_ck_n
 
-    spacefft.module.reset_n.get   := !rst_lvds.io.peripheral_reset // just temporary solution for reset signal it should be active in 1, that needs to be changed
-    spacefft.module.mem_reset.get := rst_lvds.io.peripheral_reset
+      spacefft.module.reset_n.get   := !rst_lvds.io.peripheral_reset // just temporary solution for reset signal it should be active in 1, that needs to be changed
+      spacefft.module.mem_reset.get := rst_lvds.io.peripheral_reset
 
-    spacefft.module.ddrIO.get.ddr3.get.sys_clk := pll_dsp.io.clk_out1
-    spacefft.module.ddrIO.get.ddr3.get.clk_ref := pll_dsp.io.clk_out2
-    spacefft.module.ddrIO.get.ddr3.get.ddr3_dq    <> ddr3_dq
-    spacefft.module.ddrIO.get.ddr3.get.ddr3_dqs_p <> ddr3_dqs_p
-    spacefft.module.ddrIO.get.ddr3.get.ddr3_dqs_n <> ddr3_dqs_n
+      spacefft.module.ddrIO.get.ddr3.get.sys_clk := pll_dsp.io.clk_out1
+      spacefft.module.ddrIO.get.ddr3.get.clk_ref := pll_dsp.io.clk_out2
+      spacefft.module.ddrIO.get.ddr3.get.ddr3_dq    <> io.ddr3_dq.get
+      spacefft.module.ddrIO.get.ddr3.get.ddr3_dqs_p <> io.ddr3_dqs_p.get
+      spacefft.module.ddrIO.get.ddr3.get.ddr3_dqs_n <> io.ddr3_dqs_n.get
+    }
+    
 
     // spacefft clock & reset
     spacefft.module.clock := pll_dsp.io.clk_out1
@@ -241,3 +259,23 @@ object NexysVideoShellApp extends App
   (new ChiselStage).execute(Array("--target-dir", "verilog/NexysVideoShell"), Seq(ChiselGeneratorAnnotation(() => lazyDut.module)))
 }
 
+object NexysVideoSmallShellApp extends App
+{
+  implicit val p: Parameters = Parameters.empty
+
+  val params = (new SpaceFFTSmallScopeParams(512, 256, DDR3)).params
+  val lazyDut = LazyModule(new NexysVideoShell(params, 4))
+
+  (new ChiselStage).execute(Array("--target-dir", "verilog/NexysVideoSmallShell"), Seq(ChiselGeneratorAnnotation(() => lazyDut.module)))
+}
+
+
+object NexysVideoSmallNoDDRShellApp extends App
+{
+  implicit val p: Parameters = Parameters.empty
+
+  val params = (new SpaceFFTSmallScopeNoDDRParams(256, 128)).params
+  val lazyDut = LazyModule(new NexysVideoShell(params, 4))
+
+  (new ChiselStage).execute(Array("--target-dir", "verilog/NexysVideoSmallNoDDRShell"), Seq(ChiselGeneratorAnnotation(() => lazyDut.module)))
+}

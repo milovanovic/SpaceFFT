@@ -36,7 +36,7 @@ class DataGen(dataSize: Int) extends LazyModule()(Parameters.empty) {
 
     val counter = RegInit(0.U((log2Ceil(dataSize)).W))
     out.valid := 1.U
-    out.bits.data := counter << (out.bits.data.getWidth - log2Ceil(dataSize))
+    out.bits.data := counter// << (out.bits.data.getWidth - log2Ceil(dataSize))
     when(out.fire()) {counter := counter + 1.U}
     out.bits.last := counter === (dataSize - 1).U
   }
@@ -51,7 +51,7 @@ class DataGenCFAR(dataSize: Int) extends LazyModule()(Parameters.empty) {
     val counter = RegInit(0.U((log2Ceil(dataSize)).W))
     out.valid := 1.U
     val w_cut   = Wire(UInt(16.W)) 
-    w_cut := counter << (w_cut.getWidth - log2Ceil(dataSize))
+    w_cut := counter// << (w_cut.getWidth - log2Ceil(dataSize))
     out.bits.data := Cat(0.U(21.W), w_cut, 0.U(11.W))
     when(out.fire()) {counter := counter + 1.U}
     out.bits.last := counter === (dataSize - 1).U

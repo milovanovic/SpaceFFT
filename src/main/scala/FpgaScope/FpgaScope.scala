@@ -28,17 +28,20 @@ class FpgaScopeScopeIO extends Bundle {
   val ARST = Input(Bool())
 }
 
-class DataGen(dataSize: Int) extends LazyModule()(Parameters.empty) {
+class DataGen(rangeSize: Int, dopplerSize: Int) extends LazyModule()(Parameters.empty) {
   val node = AXI4StreamMasterNode(AXI4StreamMasterParameters(name = "AXI4 Stream", n = 2, numMasters = 1))
 
   lazy val module = new LazyModuleImp(this) {
     val out = node.out(0)._1
 
-    val counter = RegInit(0.U((log2Ceil(dataSize)).W))
-    out.valid := 1.U
-    out.bits.data := counter// << (out.bits.data.getWidth - log2Ceil(dataSize))
-    when(out.fire()) {counter := counter + 1.U}
-    out.bits.last := counter === (dataSize - 1).U
+    val range_counter   = RegInit(0.U((log2Ceil(rangeSize)).W))
+    val doppler_counter = RegInit((dopplerSize/2).U((log2Ceil(dopplerSize)).W))
+    out.valid := ~(reset.asBool())
+    out.bits.data := range_counter
+    when(out.fire()) {
+      doppler_counter := doppler_counter + 1.U
+      when(doppler_counter === (dopplerSize - 1).U) {range_counter := range_counter + 1.U}
+    }
   }
 }
 
@@ -49,7 +52,7 @@ class DataGenCFAR(dataSize: Int) extends LazyModule()(Parameters.empty) {
     val out = node.out(0)._1
 
     val counter = RegInit(0.U((log2Ceil(dataSize)).W))
-    out.valid := 1.U
+    out.valid := ~(reset.asBool())
     val w_cut   = Wire(UInt(16.W)) 
     w_cut := counter// << (w_cut.getWidth - log2Ceil(dataSize))
     out.bits.data := Cat(0.U(21.W), w_cut, 0.U(11.W))
@@ -58,10 +61,10 @@ class DataGenCFAR(dataSize: Int) extends LazyModule()(Parameters.empty) {
   }
 }
 
-class FpgaScope[T <: Data : Real: BinaryRepresentation, D, U, E, O, B <: Data] (params: ScopeParameters[T], dataSize: Int, beatBytes: Int) extends LazyModule()(Parameters.empty) {
+class FpgaScope[T <: Data : Real: BinaryRepresentation, D, U, E, O, B <: Data] (params: ScopeParameters[T], rangeSize: Int, dopplerSize: Int, beatBytes: Int) extends LazyModule()(Parameters.empty) {
   val scope = LazyModule(new AXI4Scope(params, beatBytes))
-  val data1 = LazyModule(new DataGenCFAR(dataSize))
-  val data2 = LazyModule(new DataGen(dataSize))
+  val data1 = LazyModule(new DataGenCFAR(rangeSize))
+  val data2 = LazyModule(new DataGen(rangeSize, dopplerSize))
   // JTAG
   val jtagModule = LazyModule(new JTAGToMasterAXI4(3, BigInt("0", 2), 4, AddressSet(0x00000, 0x3fff), 8){
     def makeIO2(): TopModuleIO = {
@@ -124,8 +127,9 @@ object FpgaScopeApp extends App
   val range = 512
   val doppler = 256
   val startAddress = 0x0000
-  val params = (new ScopeParams(range, doppler, startAddress)).params
-  val lazyDut = LazyModule(new FpgaScope(params, range,  4))
+  val scale_x = 4
+  val params = (new ScopeParams(range, doppler, startAddress, scale_x)).params
+  val lazyDut = LazyModule(new FpgaScope(params, range, doppler, 4))
 
   (new ChiselStage).execute(Array("--target-dir", "verilog/Scope"), Seq(ChiselGeneratorAnnotation(() => lazyDut.module)))
 }

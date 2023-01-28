@@ -1,36 +1,33 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package spacefft.nexys
+package dissertation.nexys
 
 import chisel3._
 import chisel3.stage.{ChiselGeneratorAnnotation, ChiselStage}
-import chisel3.experimental.{Analog, IO, FixedPoint, fromStringToStringParam, fromIntToIntParam}
+import chisel3.experimental.{Analog, IO, FixedPoint}
 
 import dsptools.numbers._
 
-import freechips.rocketchip.amba.axi4._
+import dsputils._
+
 import freechips.rocketchip.amba.axi4stream._
 import freechips.rocketchip.config.{Parameters}
 import freechips.rocketchip.diplomacy._
 
-import spacefft._
+import lvdsphy._
+import dissertation._
 import jtag2mm._
 
-class NexysVideoShellIO(val scope: Boolean, val ddr3: Boolean) extends Bundle {
-  val i_data_p  = Input(UInt(1.W))
-  val i_data_n  = Input(UInt(1.W))
+class NexysVideoShellIO(val ddr3: Boolean, val meas: Boolean, val channels: Int) extends Bundle {
+  // LVDS signals
+  val i_data_p  = Input(Vec(channels, Bool()))
+  val i_data_n  = Input(Vec(channels, Bool()))
   val i_valid_p = Input(Bool())
   val i_valid_n = Input(Bool())
   val i_frame_p = Input(Bool())
   val i_frame_n = Input(Bool())
   val i_clk_p   = Input(Clock())
   val i_clk_n   = Input(Clock())
-  val clock_n   = Input(Clock())
-  // tmds output ports
-  val clk_p  = if (scope) Some(Output(Bool())) else None
-  val clk_n  = if (scope) Some(Output(Bool())) else None
-  val data_p = if (scope) Some(Output(UInt(3.W))) else None
-  val data_n = if (scope) Some(Output(UInt(3.W))) else None
 
   // JTAG input ports
   val TDI  = Input(Bool())
@@ -53,40 +50,59 @@ class NexysVideoShellIO(val scope: Boolean, val ddr3: Boolean) extends Bundle {
   val ddr3_dqs_n   = if (ddr3) Some(Analog((2.W))) else None
   val ddr3_ck_p    = if (ddr3) Some(Output(Bool())) else None
   val ddr3_ck_n    = if (ddr3) Some(Output(Bool())) else None
+
+  // Measurement
+  val delayTime = if (meas) Some(Vec(channels + 1, Output(Bool()))) else None
+  val trigger   = if (meas) Some(Output(Bool())) else None
 }
 
 object NexysVideoShellIO {
-  def apply(scope: Boolean, ddr3: Boolean): NexysVideoShellIO = new NexysVideoShellIO(scope, ddr3)
+  def apply(ddr3: Boolean, meas: Boolean, channels: Int): NexysVideoShellIO = new NexysVideoShellIO(ddr3, meas, channels)
 }
 
-class NexysVideoShell(params: SpaceFFTParameters[FixedPoint], beatBytes: Int) extends LazyModule()(Parameters.empty) {
-  // SpaceFFT
-  val spacefft = LazyModule(new AXI4SpaceFFT(params, 4) {
+class NexysVideoShell(params: DissertationParameters[FixedPoint], lvdsphyParams: DataRXParams, beatBytes: Int) extends LazyModule()(Parameters.empty) {
+  // LVDS connection and data processing
+  val lvdsphy = LazyModule(new AXI4StreamDataRX(lvdsphyParams) with DataRXPins)
+  // DISSERTATION
+  val dissertation = LazyModule(new AXI4Dissertation(params, 4) {
     // streamNode
-    val ioInNode_1D  = if (lvdsphy == None) Some(BundleBridgeSource(() => new AXI4StreamBundle(AXI4StreamBundleParameters(n = beatBytes)))) else None
-    val ioOutNode_1D = if (scope == None) Some(BundleBridgeSink[AXI4StreamBundle]()) else None
-    val ioOutNode_2D = if (scope == None) Some( BundleBridgeSink[AXI4StreamBundle]()) else None
+    val ioInNode_1D  = Seq.fill(streamNodeIn1D.length) { BundleBridgeSource(() => new AXI4StreamBundle(AXI4StreamBundleParameters(n = beatBytes/2))) }
+    val ioOutNode_1D = if (detectSignal == None) Some(BundleBridgeSink[AXI4StreamBundle]()) else None
+    val ioOutNode_2D = Seq.fill(streamNodeOut2D.length) { BundleBridgeSink[AXI4StreamBundle]() }
 
-    if (ioInNode_1D != None)  { streamNode.get := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = beatBytes)) := ioInNode_1D.get }
-    if (ioOutNode_1D != None) { ioOutNode_1D.get := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := streamNode.get }
-    if (ioOutNode_2D != None) { ioOutNode_2D.get := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := blocks_2D.last.streamNode }
+    (streamNodeIn1D, ioInNode_1D).zipped.map{ (out, in) => { out := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = beatBytes/2)) := in }}
+    if (ioOutNode_1D != None) { ioOutNode_1D.get := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := streamNodeOut1D.get }
+    (ioOutNode_2D, streamNodeOut2D).zipped.map{ (out, in) => { out := AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := in }}
 
-    val in_1D  = if (ioInNode_1D != None)  InModuleBody { ioInNode_1D.get.makeIO() } else None
+    /* 1D input streamNode pins */
+    val in_1D = ioInNode_1D.zipWithIndex.map{ case (m, i) => {
+        implicit val valName = ValName(s"in_1D_${i}")
+        val in_1D = InModuleBody { m.makeIO() }
+        in_1D
+      }
+    }
+    /* 1D output streamNode pins */
     val out_1D = if (ioOutNode_1D != None) InModuleBody { ioOutNode_1D.get.makeIO() } else None
-    val out_2D = if (ioOutNode_2D != None) InModuleBody { ioOutNode_2D.get.makeIO() } else None
+    /* 2D output streamNode pins */
+    val out_2D = ioOutNode_2D.zipWithIndex.map{ case (m, i) => {
+        implicit val valName = ValName(s"out_2D_${i}")
+        val out_2D = InModuleBody { m.makeIO() }
+        out_2D
+      }
+    }
 
     // pins
-    def makeSpaceFFTIO(): SpaceFFTIO = {
-      val io2: SpaceFFTIO = IO(io.cloneType)
+    def makeDissertationIO(): DissertationIO = {
+      val io2: DissertationIO = IO(io.cloneType)
       io2.suggestName("io")
       io2 <> io
       io2
     }
-    val ioBlock = if (lvdsphy != None || crc_1D != None || scope != None) Some(InModuleBody { makeSpaceFFTIO() }) else None
+    val ioBlock = Some(InModuleBody { makeDissertationIO() })
   })
 
   // JTAG
-  val jtagModule = LazyModule(new JTAGToMasterAXI4(3, BigInt("0", 2), 4, AddressSet(0x00000, 0x3fff), 8){
+  val jtagModule = LazyModule(new JTAGToMasterAXI4(3, BigInt("0", 2), 4, AddressSet(0x00000000, 0x6FFFFFFF), 8){
     def makeIO2(): TopModuleIO = {
       val io2: TopModuleIO = IO(io.cloneType)
       io2.suggestName("ioJTAG")
@@ -97,14 +113,11 @@ class NexysVideoShell(params: SpaceFFTParameters[FixedPoint], beatBytes: Int) ex
   })
 
   // Connect mem node
-  val bus = LazyModule(new AXI4Xbar)
-  val mem = Some(bus.node)
-  spacefft.mem.get := bus.node
-  mem.get := jtagModule.node.get
+  dissertation.mem.get := jtagModule.node.get
 
   lazy val module = new LazyModuleImp(this) {
     // IO
-    val io = IO(new NexysVideoShellIO(spacefft.scope != None, spacefft.ddrCond))
+    val io = IO(new NexysVideoShellIO(dissertation.ddrCond, dissertation.delayMeasurement != None, params.dataChannels))
     // JTAG IO
     jtagModule.ioJTAG.jtag.TCK   := io.TCK
     jtagModule.ioJTAG.jtag.TMS   := io.TMS
@@ -113,29 +126,17 @@ class NexysVideoShell(params: SpaceFFTParameters[FixedPoint], beatBytes: Int) ex
     // PLL & RESETS
     val pll_lvds = Module(new PLL_LVDS)
     val pll_dsp  = Module(new PLL_DSP)
-    val pll_hdmi = Module(new PLL_HDMI)
     val rst_lvds = Module(new RESET_SYS)
     val rst_dsp  = Module(new RESET_SYS)
-    val rst_hdmi = Module(new RESET_SYS)
-    // Buffers
-    val buff_clk = Module(new IBUFG)
-    // val pixbufg = Module(new BUFG)
-    // val bufio = Module(new BUFIO)
-    // val bufr = Module(new BUFR())
 
     // iserdese's
     val selectio_frame = Module(new SelectIO)
     val selectio_valid = Module(new SelectIO)
-    val selectio_data  = Module(new SelectIO)
+    val selectio_data  = Seq.fill(params.dataChannels) { Module(new SelectIO) }
 
-    buff_clk.io.I := clock
     // pll_dsp
-    pll_dsp.io.clk_in1 := buff_clk.io.O
+    pll_dsp.io.clk_in1 := clock
     pll_dsp.io.reset := 0.U
-
-    // pll_hdmi
-    pll_hdmi.io.clk_in1 := buff_clk.io.O
-    pll_hdmi.io.reset := 0.U
 
     // pll_lvds
     pll_lvds.io.clk_in1_p := io.i_clk_p
@@ -162,16 +163,6 @@ class NexysVideoShell(params: SpaceFFTParameters[FixedPoint], beatBytes: Int) ex
     rst_dsp.io.interconnect_aresetn := DontCare
     rst_dsp.io.peripheral_aresetn   := DontCare
 
-    // rst_hdmi
-    rst_hdmi.io.slowest_sync_clk     := pll_hdmi.io.clk_out2
-    rst_hdmi.io.ext_reset_in         := reset
-    rst_hdmi.io.aux_reset_in         := 0.U
-    rst_hdmi.io.mb_debug_sys_rst     := 0.U
-    rst_hdmi.io.dcm_locked           := pll_hdmi.io.locked
-    rst_hdmi.io.bus_struct_reset     := DontCare
-    rst_hdmi.io.interconnect_aresetn := DontCare
-    rst_hdmi.io.peripheral_aresetn   := DontCare
-
     // selectIO frame
     selectio_frame.io.clk_in     := pll_lvds.io.clk_out1
     selectio_frame.io.clk_div_in := pll_lvds.io.clk_out2
@@ -188,60 +179,75 @@ class NexysVideoShell(params: SpaceFFTParameters[FixedPoint], beatBytes: Int) ex
     selectio_valid.io.data_in_from_pins_p := io.i_valid_p
     selectio_valid.io.data_in_from_pins_n := io.i_valid_n
 
-    //selectIO  data
-    selectio_data.io.clk_in     := pll_lvds.io.clk_out1
-    selectio_data.io.clk_div_in := pll_lvds.io.clk_out2
-    selectio_data.io.io_reset   := rst_lvds.io.peripheral_reset
-    selectio_data.io.bitslip    := 0.U
-    selectio_data.io.data_in_from_pins_p := io.i_data_p(0)
-    selectio_data.io.data_in_from_pins_n := io.i_data_n(0)
-
-    // lvds
-    spacefft.ioBlock.get.i_async_clock.get := pll_lvds.io.clk_out2
-    spacefft.ioBlock.get.i_async_reset.get := rst_lvds.io.mb_reset
-    spacefft.ioBlock.get.i_data.get  := selectio_data.io.data_in_to_device
-    spacefft.ioBlock.get.i_frame.get := selectio_frame.io.data_in_to_device
-    spacefft.ioBlock.get.i_valid.get := selectio_valid.io.data_in_to_device
-
-    if (spacefft.ddrCond) {
-      // ethernet signals
-      spacefft.module.ddrIO.get.eth3.get.i_ready_eth := 0.U 
-
-      io.ddr3_addr.get    := spacefft.module.ddrIO.get.ddr3.get.ddr3_addr
-      io.ddr3_ba.get      := spacefft.module.ddrIO.get.ddr3.get.ddr3_ba
-      io.ddr3_ras_n.get   := spacefft.module.ddrIO.get.ddr3.get.ddr3_ras_n
-      io.ddr3_cas_n.get   := spacefft.module.ddrIO.get.ddr3.get.ddr3_cas_n
-      io.ddr3_we_n.get    := spacefft.module.ddrIO.get.ddr3.get.ddr3_we_n
-      io.ddr3_reset_n.get := spacefft.module.ddrIO.get.ddr3.get.ddr3_reset_n
-      io.ddr3_odt.get     := spacefft.module.ddrIO.get.ddr3.get.ddr3_odt
-      io.ddr3_cke.get     := spacefft.module.ddrIO.get.ddr3.get.ddr3_cke
-      io.ddr3_dm.get      := spacefft.module.ddrIO.get.ddr3.get.ddr3_dm
-      io.ddr3_ck_p.get    := spacefft.module.ddrIO.get.ddr3.get.ddr3_ck_p
-      io.ddr3_ck_n.get    := spacefft.module.ddrIO.get.ddr3.get.ddr3_ck_n
-
-      spacefft.module.reset_n.get   := !rst_lvds.io.peripheral_reset // just temporary solution for reset signal it should be active in 1, that needs to be changed
-      spacefft.module.mem_reset.get := rst_lvds.io.peripheral_reset
-
-      spacefft.module.ddrIO.get.ddr3.get.sys_clk := pll_dsp.io.clk_out1
-      spacefft.module.ddrIO.get.ddr3.get.clk_ref := pll_dsp.io.clk_out2
-      spacefft.module.ddrIO.get.ddr3.get.ddr3_dq    <> io.ddr3_dq.get
-      spacefft.module.ddrIO.get.ddr3.get.ddr3_dqs_p <> io.ddr3_dqs_p.get
-      spacefft.module.ddrIO.get.ddr3.get.ddr3_dqs_n <> io.ddr3_dqs_n.get
+    //selectIO data
+    selectio_data.zipWithIndex.map{ case (m,i) =>
+      m.io.clk_in     := pll_lvds.io.clk_out1
+      m.io.clk_div_in := pll_lvds.io.clk_out2
+      m.io.io_reset   := rst_lvds.io.peripheral_reset
+      m.io.bitslip    := 0.U
+      m.io.data_in_from_pins_p := io.i_data_p(i)
+      m.io.data_in_from_pins_n := io.i_data_n(i)
     }
-    
+    // lvds
+    lvdsphy.module.clock := pll_lvds.io.clk_out2
+    lvdsphy.module.reset := rst_lvds.io.mb_reset
+    lvdsphy.ioBlock.i_async_clock.get := pll_dsp.io.clk_out1
+    lvdsphy.ioBlock.i_async_reset.get := rst_dsp.io.mb_reset
+    lvdsphy.ioBlock.i_frame := selectio_frame.io.data_in_to_device
+    lvdsphy.ioBlock.i_valid := selectio_valid.io.data_in_to_device
+    selectio_data.zipWithIndex.map{ case (m,i) =>
+      lvdsphy.ioBlock.i_data(i) := m.io.data_in_to_device
+    }
 
-    // spacefft clock & reset
-    spacefft.module.clock := pll_dsp.io.clk_out1
-    spacefft.module.reset := rst_dsp.io.mb_reset
-    spacefft.ioBlock.get.clk_pixel.get  := pll_hdmi.io.clk_out2
-    spacefft.ioBlock.get.clk_serdes.get := pll_hdmi.io.clk_out1
-    spacefft.ioBlock.get.reset_hdmi.get := rst_hdmi.io.mb_reset
+    // Connect dissertation inputs to the lvds_phy
+    dissertation.in_1D.zipWithIndex.map{ case (m,i) =>
+      m.bits.data := lvdsphy.out.bits.data(16*(i+1)-1, 16*i)
+      m.bits.last := lvdsphy.out.bits.last
+      m.valid := lvdsphy.out.valid
+    }
+    lvdsphy.out.ready := dissertation.in_1D.map(m => m.ready).reduce((a, b) => a & b)
 
-    // HDMI pins
-    io.clk_p.get  := spacefft.ioBlock.get.clk_p.get
-    io.clk_n.get  := spacefft.ioBlock.get.clk_n.get
-    io.data_p.get := spacefft.ioBlock.get.data_p.get
-    io.data_n.get := spacefft.ioBlock.get.data_n.get
+    // Connect dissertation outputs
+    if(dissertation.delayMeasurement != None) {
+      io.trigger.get := dissertation.ioBlock.get.trigger.get
+      io.delayTime.get := dissertation.ioBlock.get.delayTime.get
+      dissertation.out_2D.zipWithIndex.map{ case (m,i) =>
+        m.bits.data := DontCare
+        m.bits.last := DontCare
+        m.valid := DontCare
+        m.ready := 1.U
+      }
+    }
+
+    if (dissertation.ddrCond) {
+      // ethernet signals
+      dissertation.module.ddrIO.get.eth3.get.i_ready_eth := 0.U 
+
+      io.ddr3_addr.get    := dissertation.module.ddrIO.get.ddr3.get.ddr3_addr
+      io.ddr3_ba.get      := dissertation.module.ddrIO.get.ddr3.get.ddr3_ba
+      io.ddr3_ras_n.get   := dissertation.module.ddrIO.get.ddr3.get.ddr3_ras_n
+      io.ddr3_cas_n.get   := dissertation.module.ddrIO.get.ddr3.get.ddr3_cas_n
+      io.ddr3_we_n.get    := dissertation.module.ddrIO.get.ddr3.get.ddr3_we_n
+      io.ddr3_reset_n.get := dissertation.module.ddrIO.get.ddr3.get.ddr3_reset_n
+      io.ddr3_odt.get     := dissertation.module.ddrIO.get.ddr3.get.ddr3_odt
+      io.ddr3_cke.get     := dissertation.module.ddrIO.get.ddr3.get.ddr3_cke
+      io.ddr3_dm.get      := dissertation.module.ddrIO.get.ddr3.get.ddr3_dm
+      io.ddr3_ck_p.get    := dissertation.module.ddrIO.get.ddr3.get.ddr3_ck_p
+      io.ddr3_ck_n.get    := dissertation.module.ddrIO.get.ddr3.get.ddr3_ck_n
+
+      dissertation.module.reset_n.get   := !rst_dsp.io.peripheral_reset // just temporary solution for reset signal it should be active in 1, that needs to be changed
+      dissertation.module.mem_reset.get := rst_dsp.io.peripheral_reset
+
+      dissertation.module.ddrIO.get.ddr3.get.sys_clk := pll_dsp.io.clk_out1
+      dissertation.module.ddrIO.get.ddr3.get.clk_ref := pll_dsp.io.clk_out2
+      dissertation.module.ddrIO.get.ddr3.get.ddr3_dq    <> io.ddr3_dq.get
+      dissertation.module.ddrIO.get.ddr3.get.ddr3_dqs_p <> io.ddr3_dqs_p.get
+      dissertation.module.ddrIO.get.ddr3.get.ddr3_dqs_n <> io.ddr3_dqs_n.get
+    }
+
+    // dissertation clock & reset
+    dissertation.module.clock := pll_dsp.io.clk_out1
+    dissertation.module.reset := rst_dsp.io.mb_reset
 
     // jtag clock and reset
     jtagModule.module.clock := pll_dsp.io.clk_out1
@@ -249,33 +255,22 @@ class NexysVideoShell(params: SpaceFFTParameters[FixedPoint], beatBytes: Int) ex
   }
 }
 
-object NexysVideoShellApp extends App
+object NexysVideoMeasurementDDRShellApp extends App
 {
   implicit val p: Parameters = Parameters.empty
 
-  val params = (new SpaceFFTScopeParams(512, 256, DDR3)).params
-  val lazyDut = LazyModule(new NexysVideoShell(params, 4))
+  val dataChannels  = 4
+  val lvdsphyParams = DataRXParams(
+        channels = dataChannels,
+        asyncParams = Some(AXI4StreamAsyncQueueWithControlParams(
+          ctrlBits = 3,
+          sync     = 4,
+          depth    = 8,
+          safe     = true
+        ))
+      )
+  val params = (new DissertationMeasurementParams(rangeFFTSize = 1024, dopplerFFTSize = 256, ddrType = DDR3, channels = dataChannels)).params
+  val lazyDut = LazyModule(new NexysVideoShell(params, lvdsphyParams, 4))
 
-  (new ChiselStage).execute(Array("--target-dir", "verilog/NexysVideoShell"), Seq(ChiselGeneratorAnnotation(() => lazyDut.module)))
-}
-
-object NexysVideoSmallShellApp extends App
-{
-  implicit val p: Parameters = Parameters.empty
-
-  val params = (new SpaceFFTSmallScopeParams(512, 256, DDR3)).params
-  val lazyDut = LazyModule(new NexysVideoShell(params, 4))
-
-  (new ChiselStage).execute(Array("--target-dir", "verilog/NexysVideoSmallShell"), Seq(ChiselGeneratorAnnotation(() => lazyDut.module)))
-}
-
-
-object NexysVideoSmallNoDDRShellApp extends App
-{
-  implicit val p: Parameters = Parameters.empty
-
-  val params = (new SpaceFFTSmallScopeNoDDRParams(256, 128)).params
-  val lazyDut = LazyModule(new NexysVideoShell(params, 4))
-
-  (new ChiselStage).execute(Array("--target-dir", "verilog/NexysVideoSmallNoDDRShell"), Seq(ChiselGeneratorAnnotation(() => lazyDut.module)))
+  (new ChiselStage).execute(Array("--target-dir", "verilog/NexysVideoMeasurementDDRShell"), Seq(ChiselGeneratorAnnotation(() => lazyDut.module)))
 }

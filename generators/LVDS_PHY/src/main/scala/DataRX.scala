@@ -125,7 +125,7 @@ abstract class DataRX[D, U, E, O, B <: Data] (val params: DataRXParams) extends 
       asyncQueue.get.module.reset := io.i_async_reset.get
       io.o_crc := asyncQueue.get.module.io.out_ctrl(byte2word.ioBlock.o_crc.getWidth + word_detector.ioBlock.o_word_size.getWidth - 1)
       io.o_word_size := asyncQueue.get.module.io.out_ctrl(word_detector.ioBlock.o_word_size.getWidth - 1, 0)
-
+      out.bits.data  := asyncQueue.get.out.bits.data
       out.valid := asyncQueue.get.out.valid
       asyncQueue.get.out.ready := out.ready
     }

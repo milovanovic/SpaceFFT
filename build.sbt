@@ -26,7 +26,7 @@ def javacOptionsVersion(scalaVersion: String): Seq[String] = {
   }
 }
 
-name := "SpaceFFT"
+name := "spaceFFT"
 
 val commonSettings = Seq(
   version := "1.0-SNAPSHOT",
@@ -79,8 +79,11 @@ lazy val jtag2mm = (project in file("generators/jtag2mm"))
 lazy val scope = (project in file("generators/chisel-scope"))
   .settings(commonSettings: _*)
 
+lazy val adder = (project in file("generators/NonCoherentAdder"))
+  .settings(commonSettings: _*)
+
 lazy val spaceFFT = (project in file("."))
-  .dependsOn(windowing, fft, logMagMux, accumulator, cfar, preproc, `chisel-crc`, `dsp-utils`, `lvds-phy`, jtag2mm, scope)
+  .dependsOn(windowing, fft, logMagMux, accumulator, cfar, preproc, `chisel-crc`, `dsp-utils`, `lvds-phy`, jtag2mm, scope, adder)
   .settings(commonSettings: _*)
   .settings( // Settings for scalafix
     semanticdbEnabled := true,

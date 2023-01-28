@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package spacefft.nexys
+package dissertation.nexys
 
 import chisel3._
 import chisel3.experimental._

@@ -1,4 +1,5 @@
 # SpaceFFT
+
 Signal Processing ACcElerator For Fast Target detection (SPACEFFT detection)
 
 ## Overview
@@ -15,5 +16,28 @@ algorithm.
 ## Prerequisites
 
 The following software packages should be installed prior to running this project:
+
 * [sbt](http://www.scala-sbt.org)
 * [Verilator](http://www.veripool.org/wiki/verilator)
+
+## Setup
+
+Clone this repository, switch directory and run tests:
+
+```bash
+git clone https://github.com/milovanovic/SpaceFFT.git
+cd SpaceFFT
+git submodule update --init --recursive
+```
+
+## Generate verilog
+
+To generate verilog code run:
+
+```bash
+make SpaceFFT
+```
+
+Verilog code will be generated in folder:
+
+* `verilog/SpaceFFT`

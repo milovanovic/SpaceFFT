@@ -394,5 +394,5 @@ object DissertationMeasurementDDRApp extends App
   val params = (new DissertationMeasurementParams(rangeFFTSize = 1024, dopplerFFTSize = 256, ddrType = DDR3, channels = 4)).params
   val lazyDut = LazyModule(new AXI4Dissertation(params, 4) with AXI4DissertationPins)
 
-  (new ChiselStage).execute(Array("--target-dir", "verilog/DissertationMeasurement"), Seq(ChiselGeneratorAnnotation(() => lazyDut.module)))
+  (new ChiselStage).execute(Array("--target-dir", "verilog/SpaceFFT"), Seq(ChiselGeneratorAnnotation(() => lazyDut.module)))
 }

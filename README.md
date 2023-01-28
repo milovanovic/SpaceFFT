@@ -20,6 +20,16 @@ The following software packages should be installed prior to running this projec
 * [sbt](http://www.scala-sbt.org)
 * [Verilator](http://www.veripool.org/wiki/verilator)
 
+## Parameter settings
+
+Design parameters are defined inside `case class DissertationParameters`. Users can customize design per use case by setting the appropriate parameters.
+To understand each parameter, the user should read the parameter explanations of the main blocks:
+* [Pre-Processing block](https://github.com/milovanovic/xWRdataPreProc)
+* [Windowing block](https://github.com/milovanovic/windowing)
+* [SDF-FFT block](https://github.com/milovanovic/sdf-fft)
+* [Log-Magnitude block](https://github.com/milovanovic/logMagMux)
+* [CFAR block](https://github.com/milovanovic/cfar)
+
 ## Setup
 
 Clone this repository, switch directory and run tests:
